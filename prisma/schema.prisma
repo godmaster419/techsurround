@@ -1,0 +1,300 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// AUTHENTICATION
+// ============================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("admin")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// CONTENT
+// ============================================
+
+model Author {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  bio       String?
+  image     String?
+  twitter   String?
+  linkedin  String?
+  website   String?
+  posts     Post[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  image       String?
+  posts       Post[]
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Tag {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  posts       PostTag[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Post {
+  id             String    @id @default(cuid())
+  title          String
+  slug           String    @unique
+  excerpt        String?
+  content        String?
+  featuredImage  String?
+  authorId       String?
+  author         Author?   @relation(fields: [authorId], references: [id])
+  categoryId     String?
+  category       Category? @relation(fields: [categoryId], references: [id])
+  tags           PostTag[]
+  status         String    @default("draft") // draft, published, scheduled
+  publishedAt    DateTime?
+  scheduledAt    DateTime?
+  readingTime    Int       @default(1)
+  isFeatured     Boolean   @default(false)
+  isTrending     Boolean   @default(false)
+  seoTitle       String?
+  seoDescription String?
+  focusKeyword   String?
+  canonicalUrl   String?
+  ogImage        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([categoryId])
+  @@index([authorId])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([isFeatured])
+  @@index([isTrending])
+}
+
+model PostTag {
+  postId String
+  tagId  String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+}
+
+model Media {
+  id        String   @id @default(cuid())
+  filename  String
+  url       String
+  mimeType  String
+  size      Int
+  alt       String?
+  caption   String?
+  width     Int?
+  height    Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// MOBILE ARRIVALS
+// ============================================
+
+model MobileArrival {
+  id              String        @id @default(cuid())
+  brand           String
+  name            String
+  model           String?
+  slug            String        @unique
+  shortDescription String?
+  fullDescription  String?
+  releaseDate     String?
+  launchStatus    String?
+  price           String?
+  currency        String?       @default("USD")
+  availability    String?
+  officialWebsite String?
+  primaryImage    String?
+  images          MobileImage[]
+  // Display
+  displaySize     String?
+  displayType     String?
+  displayResolution String?
+  displayRefreshRate String?
+  displayHDR      String?
+  displayProtection String?
+  // Performance
+  chipset         String?
+  cpu             String?
+  gpu             String?
+  ram             String?
+  storage         String?
+  storageVariants String?
+  expandableStorage String?
+  // Camera
+  rearCamera      String?
+  mainCamera      String?
+  ultraWide       String?
+  telephoto       String?
+  frontCamera     String?
+  videoRecording  String?
+  // Battery
+  batteryCapacity String?
+  chargingSpeed   String?
+  wirelessCharging String?
+  reverseCharging String?
+  // Connectivity
+  fiveG           String?
+  fourG           String?
+  wifi            String?
+  bluetooth       String?
+  nfc             String?
+  usb             String?
+  gps             String?
+  // SIM
+  simType         String?
+  numberOfSims    String?
+  esim            String?
+  // Software
+  os              String?
+  ui              String?
+  osVersion       String?
+  // Design
+  dimensions      String?
+  weight          String?
+  buildMaterial   String?
+  colors          String?
+  waterDustResistance String?
+  // Security
+  fingerprint     String?
+  faceUnlock      String?
+  // Audio
+  speakers        String?
+  headphoneJack   String?
+  audioFeatures   String?
+  // Other
+  sensors         String?
+  aiFeatures      String?
+  specialFeatures String?
+  accessories     String?
+  // SEO
+  seoTitle        String?
+  seoDescription  String?
+  ogImage         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([brand])
+  @@index([launchStatus])
+}
+
+model MobileImage {
+  id              String        @id @default(cuid())
+  url             String
+  alt             String?
+  order           Int           @default(0)
+  mobileArrivalId String
+  mobileArrival   MobileArrival @relation(fields: [mobileArrivalId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@index([mobileArrivalId])
+}
+
+// ============================================
+// TRENDING APPS
+// ============================================
+
+model TrendingApp {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  icon            String?
+  developer       String?
+  category        String?
+  platform        String?
+  shortDescription String?
+  fullDescription  String?
+  version         String?
+  lastUpdated     String?
+  officialWebsite String?
+  androidUrl      String?
+  iosUrl          String?
+  isFeatured      Boolean  @default(false)
+  isTrending      Boolean  @default(true)
+  tags            String?
+  features        String?
+  privacy         String?
+  seoTitle        String?
+  seoDescription  String?
+  ogImage         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================================
+// ENGAGEMENT
+// ============================================
+
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  status    String   @default("active") // active, unsubscribed
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ============================================
+// SETTINGS
+// ============================================
+
+model SiteSettings {
+  id                  String  @id @default("default")
+  siteName            String  @default("TechSurround")
+  siteDescription     String?
+  logo                String?
+  favicon             String?
+  defaultSeoTitle     String?
+  defaultSeoDescription String?
+  defaultOgImage      String?
+  contactEmail        String?
+  footerText          String?
+  socialTwitter       String?
+  socialFacebook      String?
+  socialLinkedin      String?
+  socialYoutube       String?
+  googleVerification  String?
+  analyticsId         String?
+  siteUrl             String?
+}
