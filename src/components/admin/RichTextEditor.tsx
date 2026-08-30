@@ -103,6 +103,7 @@ export default function RichTextEditor({
   const fileInputSingleRef = useRef<HTMLInputElement>(null);
   const fileInputDoubleRef = useRef<HTMLInputElement>(null);
   const fileInputTripleRef = useRef<HTMLInputElement>(null);
+  const fileInputDistributedRef = useRef<HTMLInputElement>(null);
 
   const [uploading, setUploading] = useState(false);
   const [wordCount, setWordCount] = useState(0);
@@ -390,6 +391,63 @@ export default function RichTextEditor({
     }
   };
 
+  // 4. Distribute 3 Images across Top, Middle, and Bottom sections of the article
+  const handleDistributed3Images = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    setShowImageMenu(false);
+    try {
+      const urls = await uploadFiles(Array.from(files).slice(0, 3));
+      if (urls.length > 0) {
+        const url1 = urls[0];
+        const url2 = urls[1] || urls[0];
+        const url3 = urls[2] || urls[1] || urls[0];
+
+        const distributedHtml = `
+          <figure class="my-6 not-prose">
+            <div class="rounded-2xl overflow-hidden border border-border bg-surface shadow-md">
+              <img src="${url1}" alt="Overview Visual" class="w-full h-80 object-cover" />
+            </div>
+            <figcaption class="text-xs text-muted mt-2 text-center italic">Figure 1: Main Story Overview & Visual Highlights</figcaption>
+          </figure>
+          
+          <p>Write your introductory overview, key announcements, and initial impressions here...</p>
+
+          <h2>Key Innovations & Deep-Dive Features</h2>
+          <p>Explain the core technology, architecture, user experience, and hardware specs in detail...</p>
+
+          <figure class="my-6 not-prose">
+            <div class="rounded-2xl overflow-hidden border border-border bg-surface shadow-md">
+              <img src="${url2}" alt="Feature In-Depth" class="w-full h-72 object-cover" />
+            </div>
+            <figcaption class="text-xs text-muted mt-2 text-center italic">Figure 2: Performance Benchmarks & Key Capabilities</figcaption>
+          </figure>
+
+          <p>Compare with previous models, highlight real-world benefits, and discuss performance...</p>
+
+          <h2>Final Verdict & Buying Recommendation</h2>
+          <p>Summarize the key strengths, pricing value, and final recommendation for buyers...</p>
+
+          <figure class="my-6 not-prose">
+            <div class="rounded-2xl overflow-hidden border border-border bg-surface shadow-md">
+              <img src="${url3}" alt="Conclusion Summary" class="w-full h-72 object-cover" />
+            </div>
+            <figcaption class="text-xs text-muted mt-2 text-center italic">Figure 3: Final Assessment & Comprehensive Summary</figcaption>
+          </figure>
+          <p></p>
+        `;
+        editor?.chain().focus().insertContent(distributedHtml).run();
+      }
+    } catch (err) {
+      alert("Failed to distribute images.");
+    } finally {
+      setUploading(false);
+      if (fileInputDistributedRef.current) fileInputDistributedRef.current.value = "";
+    }
+  };
+
   const handleFontSizeChange = (size: string) => {
     setCurrentFontSize(size);
     if (!size) {
@@ -422,7 +480,7 @@ export default function RichTextEditor({
 
   return (
     <div className="relative">
-      {/* Hidden file inputs for Single, 2-Grid, and 3-Grid uploads */}
+      {/* Hidden file inputs for Single, 2-Grid, 3-Grid, and 3-Distributed uploads */}
       <input
         type="file"
         ref={fileInputSingleRef}
@@ -442,6 +500,14 @@ export default function RichTextEditor({
         type="file"
         ref={fileInputTripleRef}
         onChange={handleTripleImages}
+        accept="image/*"
+        multiple
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={fileInputDistributedRef}
+        onChange={handleDistributed3Images}
         accept="image/*"
         multiple
         className="hidden"
@@ -647,31 +713,48 @@ export default function RichTextEditor({
             🔗 Link
           </button>
 
-          {/* MULTI-IMAGE LAYOUT MENU (1, 2, or 3 Images Option) */}
+          {/* MULTI-IMAGE PROFESSIONAL LAYOUT MENU */}
           <div className="relative">
             <button
               type="button"
               onClick={() => setShowImageMenu(!showImageMenu)}
-              className="px-2.5 py-1 text-xs font-semibold rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors flex items-center gap-1"
+              className="px-2.5 py-1 text-xs font-bold rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors flex items-center gap-1"
             >
               {uploading ? (
-                <span className="animate-spin">⏳</span>
+                <span className="animate-spin">⏳ Uploading...</span>
               ) : (
-                <span>🖼️ Add Images (1-3) ▾</span>
+                <span>🖼️ Professional Image Placements (1-3) ▾</span>
               )}
             </button>
 
             {showImageMenu && (
-              <div className="absolute top-full mt-1 left-0 w-56 bg-surface-elevated border border-border rounded-[var(--radius)] shadow-lg py-1.5 z-40 animate-in fade-in">
+              <div className="absolute top-full mt-1 left-0 w-72 bg-surface-elevated border border-border rounded-[var(--radius-lg)] shadow-xl py-2 z-40 animate-in fade-in">
+                {/* 3 Images Distributed across 3 distinct article positions */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImageMenu(false);
+                    fileInputDistributedRef.current?.click();
+                  }}
+                  className="w-full text-left px-3.5 py-2 text-xs text-primary font-bold hover:bg-primary/10 flex flex-col gap-0.5 border-b border-border"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span>📰</span> 3 Images in 3 Distinct Sections (Recommended)
+                  </span>
+                  <span className="text-[10px] text-muted font-normal">
+                    Places 1 at Top (Hero), 1 in Middle (Specs), and 1 at Bottom (Verdict)
+                  </span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
                     setShowImageMenu(false);
                     fileInputSingleRef.current?.click();
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2"
+                  className="w-full text-left px-3.5 py-2 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2"
                 >
-                  <span>📷 1 Image (Single Full-width)</span>
+                  <span>📷 1 Image (Single Full-width Hero)</span>
                 </button>
 
                 <button
@@ -680,9 +763,9 @@ export default function RichTextEditor({
                     setShowImageMenu(false);
                     fileInputDoubleRef.current?.click();
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
+                  className="w-full text-left px-3.5 py-2 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
                 >
-                  <span>👥 2 Images Grid (Side-by-Side)</span>
+                  <span>👥 2 Images Grid (Side-by-Side Comparison)</span>
                 </button>
 
                 <button
@@ -691,9 +774,9 @@ export default function RichTextEditor({
                     setShowImageMenu(false);
                     fileInputTripleRef.current?.click();
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
+                  className="w-full text-left px-3.5 py-2 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
                 >
-                  <span>🖼️🖼️🖼️ 3 Images Grid (3 Columns)</span>
+                  <span>🖼️🖼️🖼️ 3 Images Gallery (3 Columns)</span>
                 </button>
 
                 <button
@@ -702,9 +785,9 @@ export default function RichTextEditor({
                     setShowImageMenu(false);
                     addImageUrl();
                   }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-muted hover:text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
+                  className="w-full text-left px-3.5 py-2 text-xs text-muted hover:text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
                 >
-                  <span>🌐 Insert Image URL</span>
+                  <span>🌐 Insert Web Image URL</span>
                 </button>
               </div>
             )}
