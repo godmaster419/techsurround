@@ -7,6 +7,7 @@ import Badge from "@/components/ui/Badge";
 import Breadcrumb from "@/components/Breadcrumb";
 import SocialShare from "@/components/SocialShare";
 import NewsCard from "@/components/NewsCard";
+import ArticlePdfDownload from "@/components/ArticlePdfDownload";
 import { db } from "@/lib/db";
 import { generateArticleSchema } from "@/lib/seo";
 
@@ -162,6 +163,25 @@ export default async function ArticlePage({
                 </span>
               )}
               <span>{post.readingTime} min read</span>
+
+              <div className="ml-auto">
+                <ArticlePdfDownload
+                  title={post.title}
+                  categoryName={post.category?.name}
+                  authorName={post.author?.name}
+                  publishedDate={post.publishedAt?.toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  readingTime={post.readingTime}
+                  excerpt={post.excerpt || ""}
+                  contentHtml={post.content || ""}
+                  articleUrl={articleUrl}
+                  slug={post.slug}
+                  variant="button"
+                />
+              </div>
             </div>
           </header>
 
@@ -199,6 +219,24 @@ export default async function ArticlePage({
               dangerouslySetInnerHTML={{ __html: post.content }}
             />
           )}
+
+          {/* AUTOMATIC STANDARD PDF DOWNLOAD CARD */}
+          <ArticlePdfDownload
+            title={post.title}
+            categoryName={post.category?.name}
+            authorName={post.author?.name}
+            publishedDate={post.publishedAt?.toLocaleDateString("en-US", {
+              month: "long",
+              day: "numeric",
+              year: "numeric",
+            })}
+            readingTime={post.readingTime}
+            excerpt={post.excerpt || ""}
+            contentHtml={post.content || ""}
+            articleUrl={articleUrl}
+            slug={post.slug}
+            variant="card"
+          />
 
           {/* Tags */}
           {post.tags.length > 0 && (
