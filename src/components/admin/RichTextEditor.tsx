@@ -8,6 +8,7 @@ import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Mark, mergeAttributes } from "@tiptap/core";
+import Button from "@/components/ui/Button";
 
 // Custom TipTap Extension for Font Sizes
 declare module "@tiptap/core" {
@@ -104,6 +105,7 @@ export default function RichTextEditor({
   const fileInputDoubleRef = useRef<HTMLInputElement>(null);
   const fileInputTripleRef = useRef<HTMLInputElement>(null);
   const fileInputDistributedRef = useRef<HTMLInputElement>(null);
+  const fileInputAutoFitRef = useRef<HTMLInputElement>(null);
 
   const [uploading, setUploading] = useState(false);
   const [wordCount, setWordCount] = useState(0);
@@ -117,6 +119,15 @@ export default function RichTextEditor({
 
   // Multi-image layout dropdown
   const [showImageMenu, setShowImageMenu] = useState(false);
+
+  // Smart Auto-Fit & Converter Modal state
+  const [showAutoFitModal, setShowAutoFitModal] = useState(false);
+  const [modalImageSrc, setModalImageSrc] = useState<string | null>(null);
+  const [modalOrigWidth, setModalOrigWidth] = useState(0);
+  const [modalOrigHeight, setModalOrigHeight] = useState(0);
+  const [modalTargetRatio, setModalTargetRatio] = useState<"16:9" | "4:3" | "1:1" | "21:9">("16:9");
+  const [modalCaption, setModalCaption] = useState("Figure: Visual Breakdown & Highlights");
+  const [converting, setConverting] = useState(false);
 
   const editor = useEditor({
     extensions: [
@@ -187,7 +198,7 @@ export default function RichTextEditor({
       return;
     }
 
-    // 1. Check repeated words (e.g., "the the", "is is")
+    // 1. Check repeated words
     const repeatedWordRegex = /\b([a-zA-Z]+)\s+\1\b/gi;
     let match;
     while ((match = repeatedWordRegex.exec(text)) !== null) {
@@ -220,7 +231,7 @@ export default function RichTextEditor({
       }
     }
 
-    // 3. Capitalization after period check
+    // 3. Capitalization check
     const capitalizationRegex = /\.\s+([a-z])/g;
     while ((match = capitalizationRegex.exec(text)) !== null) {
       issues.push({
@@ -315,7 +326,7 @@ export default function RichTextEditor({
       if (urls.length > 0) {
         editor?.chain().focus().setImage({ src: urls[0], alt: file.name }).run();
       }
-    } catch (err) {
+    } catch {
       alert("Image upload failed.");
     } finally {
       setUploading(false);
@@ -349,7 +360,7 @@ export default function RichTextEditor({
         `;
         editor?.chain().focus().insertContent(gridHtml).run();
       }
-    } catch (err) {
+    } catch {
       alert("Multi-image upload failed.");
     } finally {
       setUploading(false);
@@ -383,7 +394,7 @@ export default function RichTextEditor({
         `;
         editor?.chain().focus().insertContent(gridHtml).run();
       }
-    } catch (err) {
+    } catch {
       alert("3-Image upload failed.");
     } finally {
       setUploading(false);
@@ -440,11 +451,111 @@ export default function RichTextEditor({
         `;
         editor?.chain().focus().insertContent(distributedHtml).run();
       }
-    } catch (err) {
+    } catch {
       alert("Failed to distribute images.");
     } finally {
       setUploading(false);
       if (fileInputDistributedRef.current) fileInputDistributedRef.current.value = "";
+    }
+  };
+
+  // 5. SMART AUTO-FIT & WEBP CONVERTER MODAL TRIGGER
+  const handleAutoFitFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const src = event.target?.result as string;
+      const img = new window.Image();
+      img.onload = () => {
+        setModalOrigWidth(img.naturalWidth);
+        setModalOrigHeight(img.naturalHeight);
+        setModalImageSrc(src);
+        setShowAutoFitModal(true);
+      };
+      img.src = src;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Execute Auto-Crop, WebP convert & Insert into Editor
+  const executeAutoFitAndInsert = async () => {
+    if (!modalImageSrc || !editor) return;
+    setConverting(true);
+
+    let tw = 1200;
+    let th = 675;
+    if (modalTargetRatio === "4:3") {
+      tw = 800;
+      th = 600;
+    } else if (modalTargetRatio === "1:1") {
+      tw = 800;
+      th = 800;
+    } else if (modalTargetRatio === "21:9") {
+      tw = 1400;
+      th = 600;
+    }
+
+    try {
+      const img = new window.Image();
+      img.onload = async () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = tw;
+        canvas.height = th;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+
+          // Center-Crop calculations
+          const ratio = Math.max(tw / img.naturalWidth, th / img.naturalHeight);
+          const nw = img.naturalWidth * ratio;
+          const nh = img.naturalHeight * ratio;
+          const nx = (tw - nw) / 2;
+          const ny = (th - nh) / 2;
+          ctx.drawImage(img, nx, ny, nw, nh);
+
+          // Convert to WebP blob
+          canvas.toBlob(
+            async (blob) => {
+              if (!blob) {
+                alert("Conversion failed");
+                setConverting(false);
+                return;
+              }
+              const formData = new FormData();
+              formData.append("file", blob, `optimized-${Date.now()}.webp`);
+
+              const res = await fetch("/api/upload", { method: "POST", body: formData });
+              const data = await res.json();
+              if (res.ok && data.url) {
+                const figureHtml = `
+                  <figure class="my-6 not-prose">
+                    <div class="rounded-2xl overflow-hidden border border-border bg-surface shadow-md">
+                      <img src="${data.url}" alt="${modalCaption}" class="w-full h-auto object-cover" />
+                    </div>
+                    ${modalCaption ? `<figcaption class="text-xs text-muted mt-2 text-center italic">${modalCaption}</figcaption>` : ""}
+                  </figure>
+                  <p></p>
+                `;
+                editor.chain().focus().insertContent(figureHtml).run();
+                setShowAutoFitModal(false);
+                setModalImageSrc(null);
+              } else {
+                alert("Upload failed");
+              }
+              setConverting(false);
+            },
+            "image/webp",
+            0.85
+          );
+        }
+      };
+      img.src = modalImageSrc;
+    } catch {
+      alert("Error processing image.");
+      setConverting(false);
     }
   };
 
@@ -480,7 +591,7 @@ export default function RichTextEditor({
 
   return (
     <div className="relative">
-      {/* Hidden file inputs for Single, 2-Grid, 3-Grid, and 3-Distributed uploads */}
+      {/* Hidden file inputs for Single, 2-Grid, 3-Grid, 3-Distributed, and Auto-Fit uploads */}
       <input
         type="file"
         ref={fileInputSingleRef}
@@ -510,6 +621,13 @@ export default function RichTextEditor({
         onChange={handleDistributed3Images}
         accept="image/*"
         multiple
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={fileInputAutoFitRef}
+        onChange={handleAutoFitFileSelect}
+        accept="image/*"
         className="hidden"
       />
 
@@ -713,6 +831,16 @@ export default function RichTextEditor({
             🔗 Link
           </button>
 
+          {/* SMART AUTO-FIT & CONVERT RESIZER BUTTON */}
+          <button
+            type="button"
+            onClick={() => fileInputAutoFitRef.current?.click()}
+            className="px-2.5 py-1 text-xs font-bold rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 transition-colors flex items-center gap-1"
+            title="Upload photo, auto-fit to 16:9/4:3/1:1 and convert to WebP"
+          >
+            <span>⚡ Auto-Fit & Convert</span>
+          </button>
+
           {/* MULTI-IMAGE PROFESSIONAL LAYOUT MENU */}
           <div className="relative">
             <button
@@ -723,7 +851,7 @@ export default function RichTextEditor({
               {uploading ? (
                 <span className="animate-spin">⏳ Uploading...</span>
               ) : (
-                <span>🖼️ Professional Image Placements (1-3) ▾</span>
+                <span>🖼️ Placements (1-3) ▾</span>
               )}
             </button>
 
@@ -831,6 +959,112 @@ export default function RichTextEditor({
         </div>
       </div>
 
+      {/* SMART AUTO-FIT & CONVERTER POPUP MODAL */}
+      {showAutoFitModal && modalImageSrc && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border-light pb-3">
+              <div>
+                <h3 className="font-bold text-foreground text-sm flex items-center gap-1.5">
+                  <span>⚡</span> Smart Auto-Fit & WebP Optimizer
+                </h3>
+                <p className="text-xs text-muted">
+                  Original: {modalOrigWidth}×{modalOrigHeight} px
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAutoFitModal(false)}
+                className="text-xs text-muted hover:text-foreground"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Target Ratio Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1.5">
+                Select Aspect Ratio / Dimensions:
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: "16:9", label: "Hero 16:9", dim: "1200×675" },
+                  { id: "4:3", label: "Dual 4:3", dim: "800×600" },
+                  { id: "1:1", label: "Square 1:1", dim: "800×800" },
+                  { id: "21:9", label: "Banner 21:9", dim: "1400×600" },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setModalTargetRatio(item.id as any)}
+                    className={`p-2 rounded text-center border text-xs transition-all ${
+                      modalTargetRatio === item.id
+                        ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                        : "bg-surface border-border text-foreground hover:border-primary/50"
+                    }`}
+                  >
+                    <span className="block font-bold">{item.label}</span>
+                    <span className="text-[10px] opacity-80">{item.dim}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Image Preview with aspect ratio frame */}
+            <div className="bg-surface rounded-[var(--radius)] p-2 flex items-center justify-center border border-border-light overflow-hidden max-h-52">
+              <img
+                src={modalImageSrc}
+                alt="Crop preview"
+                className={`max-h-48 rounded object-cover shadow-sm ${
+                  modalTargetRatio === "16:9"
+                    ? "aspect-video"
+                    : modalTargetRatio === "1:1"
+                    ? "aspect-square"
+                    : modalTargetRatio === "4:3"
+                    ? "aspect-4/3"
+                    : "aspect-21/9"
+                }`}
+              />
+            </div>
+
+            {/* Caption Input */}
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">
+                Image Caption (Shown below image):
+              </label>
+              <input
+                type="text"
+                value={modalCaption}
+                onChange={(e) => setModalCaption(e.target.value)}
+                placeholder="e.g., Figure: Performance test comparison"
+                className="w-full px-3 py-1.5 bg-input-bg border border-input-border rounded text-xs text-foreground"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2 pt-2 border-t border-border-light">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAutoFitModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={executeAutoFitAndInsert}
+                loading={converting}
+              >
+                🚀 Convert to WebP & Insert Image
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* GRAMMAR & QUALITY CHECK MODAL / SIDE PANEL */}
       {showGrammarPanel && (
         <div className="mt-3 p-4 bg-card-bg border border-card-border rounded-[var(--radius-xl)] shadow-md animate-in fade-in">
@@ -910,4 +1144,3 @@ export default function RichTextEditor({
     </div>
   );
 }
-

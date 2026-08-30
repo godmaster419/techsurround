@@ -210,15 +210,67 @@ export default function EditPostPage() {
     return () => clearTimeout(timer);
   }, [saveDraft, loading]);
 
-  // Direct Featured Image File Upload
+  // Automatic Smart Resizer & WebP Converter for Featured Image (16:9 1200x675)
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploadingImage(true);
     try {
+      const convertToWebP = (): Promise<Blob> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+              const tw = 1200;
+              const th = 675;
+              const canvas = document.createElement("canvas");
+              canvas.width = tw;
+              canvas.height = th;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) return reject("Canvas context unavailable");
+
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = "high";
+
+              const ratio = Math.max(tw / img.naturalWidth, th / img.naturalHeight);
+              const nw = img.naturalWidth * ratio;
+              const nh = img.naturalHeight * ratio;
+              const nx = (tw - nw) / 2;
+              const ny = (th - nh) / 2;
+
+              ctx.drawImage(img, nx, ny, nw, nh);
+              canvas.toBlob(
+                (blob) => {
+                  if (blob) resolve(blob);
+                  else reject("Blob generation failed");
+                },
+                "image/webp",
+                0.88
+              );
+            };
+            img.onerror = () => reject("Image load error");
+            img.src = event.target?.result as string;
+          };
+          reader.onerror = () => reject("File read error");
+          reader.readAsDataURL(file);
+        });
+      };
+
+      let uploadFile: File | Blob = file;
+      let uploadFileName = file.name;
+
+      try {
+        const webpBlob = await convertToWebP();
+        uploadFile = webpBlob;
+        uploadFileName = `${file.name.replace(/\.[^/.]+$/, "")}-hero-16x9.webp`;
+      } catch {
+        uploadFile = file;
+      }
+
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", uploadFile, uploadFileName);
 
       const res = await fetch("/api/upload", {
         method: "POST",
