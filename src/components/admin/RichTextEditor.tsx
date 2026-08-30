@@ -86,6 +86,13 @@ const FONT_SIZES = [
   { label: "Title (34px)", value: "34px" },
 ];
 
+interface GrammarIssue {
+  type: "grammar" | "spelling" | "readability" | "style";
+  message: string;
+  snippet?: string;
+  suggestion?: string;
+}
+
 export default function RichTextEditor({
   content,
   onChange,
@@ -93,11 +100,22 @@ export default function RichTextEditor({
   height = "520px",
   autoSaveTime,
 }: RichTextEditorProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputSingleRef = useRef<HTMLInputElement>(null);
+  const fileInputDoubleRef = useRef<HTMLInputElement>(null);
+  const fileInputTripleRef = useRef<HTMLInputElement>(null);
+
   const [uploading, setUploading] = useState(false);
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
   const [currentFontSize, setCurrentFontSize] = useState("16px");
+
+  // Grammar & Quality Assistant Panel
+  const [showGrammarPanel, setShowGrammarPanel] = useState(false);
+  const [grammarIssues, setGrammarIssues] = useState<GrammarIssue[]>([]);
+  const [readabilityScore, setReadabilityScore] = useState<string>("Good");
+
+  // Multi-image layout dropdown
+  const [showImageMenu, setShowImageMenu] = useState(false);
 
   const editor = useEditor({
     extensions: [
@@ -131,13 +149,14 @@ export default function RichTextEditor({
     editorProps: {
       attributes: {
         class: "prose max-w-none focus:outline-none p-5 text-foreground leading-relaxed min-h-full",
+        spellcheck: "true",
+        lang: "en",
       },
     },
     onUpdate: ({ editor }) => {
       const html = editor.getHTML();
       onChange(html);
 
-      // Stats calculation
       const text = editor.getText();
       setCharCount(text.length);
       const words = text.trim().split(/\s+/).filter(Boolean).length;
@@ -155,58 +174,205 @@ export default function RichTextEditor({
     }
   }, [content, editor]);
 
-  if (!editor) return null;
+  // GRAMMAR & QUALITY CHECK LOGIC
+  const runGrammarCheck = () => {
+    if (!editor) return;
+    const text = editor.getText();
+    const issues: GrammarIssue[] = [];
 
-  // Direct Image File Upload Handler
-  const handleImageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!text.trim()) {
+      setGrammarIssues([{ type: "readability", message: "Please write some text before running grammar check." }]);
+      setShowGrammarPanel(true);
+      return;
+    }
+
+    // 1. Check repeated words (e.g., "the the", "is is")
+    const repeatedWordRegex = /\b([a-zA-Z]+)\s+\1\b/gi;
+    let match;
+    while ((match = repeatedWordRegex.exec(text)) !== null) {
+      issues.push({
+        type: "grammar",
+        message: `Repeated word found: "${match[0]}"`,
+        snippet: match[0],
+        suggestion: match[1],
+      });
+    }
+
+    // 2. Common English Confusions
+    const confusions = [
+      { pattern: /\b(their)\s+(is|are|was|were)\b/gi, msg: 'Did you mean "there is/are"?', suggestion: "there" },
+      { pattern: /\b(your)\s+(right|wrong|welcome|going|doing)\b/gi, msg: 'Did you mean "you\'re"?', suggestion: "you're" },
+      { pattern: /\b(it's)\s+(color|size|name|features|camera|battery|screen|specs)\b/gi, msg: 'Possessive "its" does not have an apostrophe.', suggestion: "its" },
+      { pattern: /\b(could|should|would)\s+of\b/gi, msg: 'Use "could/should/would have" instead of "of".', suggestion: "have" },
+      { pattern: /\b(then)\s+(he|she|they|we|I)\s+(is|are)\s+better\b/gi, msg: 'For comparison, use "than".', suggestion: "than" },
+      { pattern: /\ba\s+([aeiou][a-z]+)\b/gi, msg: 'Use "an" before vowel sounds.', suggestion: "an" },
+    ];
+
+    for (const item of confusions) {
+      while ((match = item.pattern.exec(text)) !== null) {
+        issues.push({
+          type: "grammar",
+          message: item.msg,
+          snippet: match[0],
+          suggestion: item.suggestion,
+        });
+      }
+    }
+
+    // 3. Capitalization after period check
+    const capitalizationRegex = /\.\s+([a-z])/g;
+    while ((match = capitalizationRegex.exec(text)) !== null) {
+      issues.push({
+        type: "grammar",
+        message: `Sentence starts with lowercase letter: ". ${match[1]}"`,
+        snippet: match[0],
+        suggestion: `. ${match[1].toUpperCase()}`,
+      });
+    }
+
+    // 4. Readability metric
+    const sentences = text.split(/[.!?]+/).filter(Boolean).length || 1;
+    const words = text.trim().split(/\s+/).filter(Boolean).length || 1;
+    const avgWordsPerSentence = Math.round(words / sentences);
+
+    if (avgWordsPerSentence > 28) {
+      issues.push({
+        type: "readability",
+        message: `Average sentence length is high (${avgWordsPerSentence} words/sentence). Consider breaking long sentences for easier reading.`,
+      });
+      setReadabilityScore("Needs Shorter Sentences");
+    } else if (avgWordsPerSentence > 18) {
+      setReadabilityScore("Standard (Good)");
+    } else {
+      setReadabilityScore("Very Easy to Read");
+    }
+
+    setGrammarIssues(issues);
+    setShowGrammarPanel(true);
+  };
+
+  // Upload helper for single or multiple images
+  const uploadFiles = async (files: FileList | File[]): Promise<string[]> => {
+    const urls: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        urls.push(data.url);
+      }
+    }
+    return urls;
+  };
+
+  // 1. Single Image Upload
+  const handleSingleImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || "Failed to upload image.");
-        setUploading(false);
-        return;
+      const urls = await uploadFiles([file]);
+      if (urls.length > 0) {
+        editor?.chain().focus().setImage({ src: urls[0], alt: file.name }).run();
       }
-
-      // Insert uploaded image directly into TipTap editor
-      editor.chain().focus().setImage({ src: data.url, alt: file.name }).run();
     } catch (err) {
-      console.error("Image upload error:", err);
-      alert("Error uploading image. Please try again.");
+      alert("Image upload failed.");
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (fileInputSingleRef.current) fileInputSingleRef.current.value = "";
+    }
+  };
+
+  // 2. 2-Images Side-by-Side Grid
+  const handleDoubleImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    setShowImageMenu(false);
+    try {
+      const urls = await uploadFiles(Array.from(files).slice(0, 2));
+      if (urls.length > 0) {
+        const gridHtml = `
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6 not-prose">
+            ${urls
+              .map(
+                (url, i) => `
+              <div class="rounded-xl overflow-hidden border border-border bg-surface p-1 shadow-sm">
+                <img src="${url}" alt="Image ${i + 1}" class="w-full h-56 object-cover rounded-lg" />
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+          <p></p>
+        `;
+        editor?.chain().focus().insertContent(gridHtml).run();
+      }
+    } catch (err) {
+      alert("Multi-image upload failed.");
+    } finally {
+      setUploading(false);
+      if (fileInputDoubleRef.current) fileInputDoubleRef.current.value = "";
+    }
+  };
+
+  // 3. 3-Images Triple Comparison Grid
+  const handleTripleImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploading(true);
+    setShowImageMenu(false);
+    try {
+      const urls = await uploadFiles(Array.from(files).slice(0, 3));
+      if (urls.length > 0) {
+        const gridHtml = `
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 my-6 not-prose">
+            ${urls
+              .map(
+                (url, i) => `
+              <div class="rounded-xl overflow-hidden border border-border bg-surface p-1 shadow-sm">
+                <img src="${url}" alt="Image ${i + 1}" class="w-full h-44 object-cover rounded-lg" />
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+          <p></p>
+        `;
+        editor?.chain().focus().insertContent(gridHtml).run();
+      }
+    } catch (err) {
+      alert("3-Image upload failed.");
+    } finally {
+      setUploading(false);
+      if (fileInputTripleRef.current) fileInputTripleRef.current.value = "";
     }
   };
 
   const handleFontSizeChange = (size: string) => {
     setCurrentFontSize(size);
     if (!size) {
-      editor.chain().focus().unsetFontSize().run();
+      editor?.chain().focus().unsetFontSize().run();
     } else {
-      editor.chain().focus().setFontSize(size).run();
+      editor?.chain().focus().setFontSize(size).run();
     }
   };
 
   const addImageUrl = () => {
-    const url = window.prompt("Enter image URL (or use 'Upload Image' button for direct files):");
+    const url = window.prompt("Enter image URL:");
     if (url) {
-      editor.chain().focus().setImage({ src: url }).run();
+      editor?.chain().focus().setImage({ src: url }).run();
     }
   };
 
   const setLink = () => {
+    if (!editor) return;
     const previousUrl = editor.getAttributes("link").href;
     const url = window.prompt("Enter URL (e.g., https://example.com):", previousUrl);
     if (url === null) return;
@@ -217,292 +383,387 @@ export default function RichTextEditor({
     editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
   };
 
+  if (!editor) return null;
+
   return (
-    <div
-      style={{ height }}
-      className="border border-input-border rounded-[var(--radius-xl)] bg-input-bg flex flex-col overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all shadow-sm"
-    >
-      {/* Hidden file input for direct image upload */}
+    <div className="relative">
+      {/* Hidden file inputs for Single, 2-Grid, and 3-Grid uploads */}
       <input
         type="file"
-        ref={fileInputRef}
-        onChange={handleImageFileUpload}
-        accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml"
+        ref={fileInputSingleRef}
+        onChange={handleSingleImage}
+        accept="image/*"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={fileInputDoubleRef}
+        onChange={handleDoubleImages}
+        accept="image/*"
+        multiple
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={fileInputTripleRef}
+        onChange={handleTripleImages}
+        accept="image/*"
+        multiple
         className="hidden"
       />
 
-      {/* 100% FIXED STATIC TOOLBAR (NEVER SCROLLS) */}
-      <div className="shrink-0 flex flex-wrap items-center gap-1.5 p-2.5 bg-surface-elevated border-b border-border text-foreground select-none shadow-xs z-10">
-        {/* Undo / Redo */}
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().undo().run()}
-          disabled={!editor.can().undo()}
-          className="p-1.5 text-xs font-semibold rounded hover:bg-surface-hover disabled:opacity-40 disabled:hover:bg-transparent"
-          title="Undo (Ctrl+Z)"
-        >
-          ↩️
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().redo().run()}
-          disabled={!editor.can().redo()}
-          className="p-1.5 text-xs font-semibold rounded hover:bg-surface-hover disabled:opacity-40 disabled:hover:bg-transparent"
-          title="Redo (Ctrl+Y)"
-        >
-          ↪️
-        </button>
-
-        <span className="w-[1px] h-5 bg-border mx-1" />
-
-        {/* FONT SIZE SELECTOR */}
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-muted font-medium">Size:</span>
-          <select
-            value={currentFontSize}
-            onChange={(e) => handleFontSizeChange(e.target.value)}
-            className="px-2 py-1 text-xs font-semibold rounded bg-surface border border-border text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
-            title="Font Size"
+      <div
+        style={{ height }}
+        className="border border-input-border rounded-[var(--radius-xl)] bg-input-bg flex flex-col overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all shadow-sm"
+      >
+        {/* 100% FIXED STATIONARY TOOLBAR */}
+        <div className="shrink-0 flex flex-wrap items-center gap-1.5 p-2.5 bg-surface-elevated border-b border-border text-foreground select-none shadow-xs z-10">
+          {/* Undo / Redo */}
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().undo().run()}
+            disabled={!editor.can().undo()}
+            className="p-1.5 text-xs font-semibold rounded hover:bg-surface-hover disabled:opacity-40"
+            title="Undo"
           >
-            {FONT_SIZES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
+            ↩️
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().redo().run()}
+            disabled={!editor.can().redo()}
+            className="p-1.5 text-xs font-semibold rounded hover:bg-surface-hover disabled:opacity-40"
+            title="Redo"
+          >
+            ↪️
+          </button>
+
+          <span className="w-[1px] h-5 bg-border mx-1" />
+
+          {/* FONT SIZE SELECTOR */}
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-muted font-medium">Font:</span>
+            <select
+              value={currentFontSize}
+              onChange={(e) => handleFontSizeChange(e.target.value)}
+              className="px-2 py-1 text-xs font-semibold rounded bg-surface border border-border text-foreground cursor-pointer focus:outline-none"
+              title="Font Size"
+            >
+              {FONT_SIZES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <span className="w-[1px] h-5 bg-border mx-1" />
+
+          {/* Headings */}
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().setParagraph().run()}
+            className={`px-2 py-1 text-xs font-medium rounded ${
+              editor.isActive("paragraph") && !editor.isActive("heading")
+                ? "bg-primary text-primary-foreground font-bold shadow-xs"
+                : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            Normal
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+            className={`px-2 py-1 text-xs font-bold rounded ${
+              editor.isActive("heading", { level: 2 })
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            H2
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+            className={`px-2 py-1 text-xs font-bold rounded ${
+              editor.isActive("heading", { level: 3 })
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            H3
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
+            className={`px-2 py-1 text-xs font-bold rounded ${
+              editor.isActive("heading", { level: 4 })
+                ? "bg-primary text-primary-foreground shadow-xs"
+                : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            H4
+          </button>
+
+          <span className="w-[1px] h-5 bg-border mx-1" />
+
+          {/* Inline Styles */}
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            className={`px-2 py-1 text-xs font-extrabold rounded ${
+              editor.isActive("bold") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+            title="Bold"
+          >
+            B
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            className={`px-2 py-1 text-xs italic font-serif rounded ${
+              editor.isActive("italic") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+            title="Italic"
+          >
+            I
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleUnderline().run()}
+            className={`px-2 py-1 text-xs underline rounded ${
+              editor.isActive("underline") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+            title="Underline"
+          >
+            U
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleStrike().run()}
+            className={`px-2 py-1 text-xs line-through rounded ${
+              editor.isActive("strike") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+            title="Strikethrough"
+          >
+            S
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleCode().run()}
+            className={`px-2 py-1 text-xs font-mono rounded ${
+              editor.isActive("code") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+            title="Inline Code"
+          >
+            `code`
+          </button>
+
+          <span className="w-[1px] h-5 bg-border mx-1" />
+
+          {/* Lists & Quotes */}
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+            className={`px-2 py-1 text-xs rounded ${
+              editor.isActive("bulletList") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            • List
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleOrderedList().run()}
+            className={`px-2 py-1 text-xs rounded ${
+              editor.isActive("orderedList") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            1. List
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+            className={`px-2 py-1 text-xs rounded ${
+              editor.isActive("blockquote") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            &ldquo; Quote
+          </button>
+          <button
+            type="button"
+            onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+            className={`px-2 py-1 text-xs rounded ${
+              editor.isActive("codeBlock") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            &lt;/&gt;
+          </button>
+
+          <span className="w-[1px] h-5 bg-border mx-1" />
+
+          {/* Link */}
+          <button
+            type="button"
+            onClick={setLink}
+            className={`px-2 py-1 text-xs font-semibold rounded ${
+              editor.isActive("link") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
+            }`}
+          >
+            🔗 Link
+          </button>
+
+          {/* MULTI-IMAGE LAYOUT MENU (1, 2, or 3 Images Option) */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowImageMenu(!showImageMenu)}
+              className="px-2.5 py-1 text-xs font-semibold rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors flex items-center gap-1"
+            >
+              {uploading ? (
+                <span className="animate-spin">⏳</span>
+              ) : (
+                <span>🖼️ Add Images (1-3) ▾</span>
+              )}
+            </button>
+
+            {showImageMenu && (
+              <div className="absolute top-full mt-1 left-0 w-56 bg-surface-elevated border border-border rounded-[var(--radius)] shadow-lg py-1.5 z-40 animate-in fade-in">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImageMenu(false);
+                    fileInputSingleRef.current?.click();
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2"
+                >
+                  <span>📷 1 Image (Single Full-width)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImageMenu(false);
+                    fileInputDoubleRef.current?.click();
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
+                >
+                  <span>👥 2 Images Grid (Side-by-Side)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImageMenu(false);
+                    fileInputTripleRef.current?.click();
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
+                >
+                  <span>🖼️🖼️🖼️ 3 Images Grid (3 Columns)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowImageMenu(false);
+                    addImageUrl();
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-muted hover:text-foreground hover:bg-surface-hover flex items-center gap-2 border-t border-border-light"
+                >
+                  <span>🌐 Insert Image URL</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <span className="w-[1px] h-5 bg-border mx-1" />
+
+          {/* ENGLISH GRAMMAR & QUALITY CHECK BUTTON */}
+          <button
+            type="button"
+            onClick={runGrammarCheck}
+            className="px-2.5 py-1 text-xs font-bold rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 transition-colors flex items-center gap-1"
+            title="Check English Grammar & Readability"
+          >
+            <span>✨ Grammar Check</span>
+          </button>
         </div>
 
-        <span className="w-[1px] h-5 bg-border mx-1" />
+        {/* DEDICATED SCROLLABLE CONTENT VIEWPORT (TOOLBAR REMAINS FIXED AT TOP) */}
+        <div className="flex-1 overflow-y-auto cursor-text bg-input-bg">
+          <EditorContent editor={editor} />
+        </div>
 
-        {/* Headings */}
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().setParagraph().run()}
-          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
-            editor.isActive("paragraph") && !editor.isActive("heading")
-              ? "bg-primary text-primary-foreground font-bold shadow-xs"
-              : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Normal Text"
-        >
-          Normal
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          className={`px-2 py-1 text-xs font-bold rounded transition-colors ${
-            editor.isActive("heading", { level: 2 })
-              ? "bg-primary text-primary-foreground shadow-xs"
-              : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Heading 2"
-        >
-          H2
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          className={`px-2 py-1 text-xs font-bold rounded transition-colors ${
-            editor.isActive("heading", { level: 3 })
-              ? "bg-primary text-primary-foreground shadow-xs"
-              : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Heading 3"
-        >
-          H3
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
-          className={`px-2 py-1 text-xs font-bold rounded transition-colors ${
-            editor.isActive("heading", { level: 4 })
-              ? "bg-primary text-primary-foreground shadow-xs"
-              : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Heading 4"
-        >
-          H4
-        </button>
+        {/* FOOTER BAR WITH WORD STATS & AUTOSAVE STATUS */}
+        <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-surface border-t border-border-light text-xs text-muted">
+          <div className="flex items-center gap-4">
+            <span><strong>{wordCount}</strong> words</span>
+            <span><strong>{charCount}</strong> characters</span>
+            <span>Read time: <strong>{Math.max(1, Math.ceil(wordCount / 200))}</strong> min</span>
+          </div>
 
-        <span className="w-[1px] h-5 bg-border mx-1" />
+          <div className="flex items-center gap-2">
+            {autoSaveTime && (
+              <span className="text-[11px] font-medium text-success flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+                Auto-saved ({autoSaveTime})
+              </span>
+            )}
+            <span className="text-[11px] text-muted font-mono">Spellcheck Active</span>
+          </div>
+        </div>
+      </div>
 
-        {/* Inline Formatting */}
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          className={`px-2.5 py-1 text-xs font-extrabold rounded transition-colors ${
-            editor.isActive("bold") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Bold (Ctrl+B)"
-        >
-          B
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          className={`px-2.5 py-1 text-xs italic font-serif rounded transition-colors ${
-            editor.isActive("italic") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Italic (Ctrl+I)"
-        >
-          I
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          className={`px-2.5 py-1 text-xs underline rounded transition-colors ${
-            editor.isActive("underline") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Underline (Ctrl+U)"
-        >
-          U
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleStrike().run()}
-          className={`px-2.5 py-1 text-xs line-through rounded transition-colors ${
-            editor.isActive("strike") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Strikethrough"
-        >
-          S
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleCode().run()}
-          className={`px-2 py-1 text-xs font-mono rounded transition-colors ${
-            editor.isActive("code") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Inline Code"
-        >
-          `code`
-        </button>
+      {/* GRAMMAR & QUALITY CHECK MODAL / SIDE PANEL */}
+      {showGrammarPanel && (
+        <div className="mt-3 p-4 bg-card-bg border border-card-border rounded-[var(--radius-xl)] shadow-md animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-border-light pb-2.5 mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base">✨</span>
+              <h3 className="font-bold text-foreground text-sm">English Grammar & Content Report</h3>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">
+                Readability: {readabilityScore}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGrammarPanel(false)}
+              className="text-xs text-muted hover:text-foreground px-2 py-1 rounded"
+            >
+              ✕ Close
+            </button>
+          </div>
 
-        <span className="w-[1px] h-5 bg-border mx-1" />
-
-        {/* Lists & Blocks */}
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className={`px-2 py-1 text-xs rounded transition-colors ${
-            editor.isActive("bulletList") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Bullet List"
-        >
-          • List
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className={`px-2 py-1 text-xs rounded transition-colors ${
-            editor.isActive("orderedList") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Numbered List"
-        >
-          1. List
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          className={`px-2 py-1 text-xs rounded transition-colors ${
-            editor.isActive("blockquote") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Blockquote"
-        >
-          &ldquo; Quote
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          className={`px-2 py-1 text-xs rounded transition-colors ${
-            editor.isActive("codeBlock") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Code Block"
-        >
-          &lt;/&gt;
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().setHorizontalRule().run()}
-          className="px-2 py-1 text-xs rounded hover:bg-surface-hover text-muted hover:text-foreground"
-          title="Horizontal Divider"
-        >
-          ― Line
-        </button>
-
-        <span className="w-[1px] h-5 bg-border mx-1" />
-
-        {/* Link & Media */}
-        <button
-          type="button"
-          onClick={setLink}
-          className={`px-2 py-1 text-xs font-semibold rounded transition-colors ${
-            editor.isActive("link") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
-          }`}
-          title="Link"
-        >
-          🔗 Link
-        </button>
-
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className="px-2.5 py-1 text-xs font-semibold rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors flex items-center gap-1"
-          title="Upload Image from your device"
-        >
-          {uploading ? (
-            <span className="animate-spin text-xs">⏳</span>
+          {grammarIssues.length === 0 ? (
+            <div className="p-3 bg-success/10 border border-success/20 rounded text-xs text-success font-medium flex items-center gap-2">
+              <span>🎉</span>
+              <span>Great job! No obvious grammatical errors or repeated words found. Your article is well-written!</span>
+            </div>
           ) : (
-            <span>📁 Upload Image</span>
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {grammarIssues.map((issue, idx) => (
+                <div
+                  key={idx}
+                  className="p-2.5 bg-surface rounded-[var(--radius)] border border-border-light text-xs flex items-start justify-between gap-3"
+                >
+                  <div>
+                    <span className="font-semibold text-destructive mr-1.5">• {issue.message}</span>
+                    {issue.snippet && (
+                      <span className="text-muted block mt-0.5">
+                        Found in text: <code className="bg-surface-hover px-1 rounded text-foreground font-mono">{issue.snippet}</code>
+                      </span>
+                    )}
+                  </div>
+                  {issue.suggestion && (
+                    <span className="shrink-0 px-2 py-0.5 rounded bg-success/15 text-success font-semibold text-[11px]">
+                      Suggestion: {issue.suggestion}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
-        </button>
-
-        <button
-          type="button"
-          onClick={addImageUrl}
-          className="px-2 py-1 text-xs rounded hover:bg-surface-hover text-muted hover:text-foreground"
-          title="Insert Web Image URL"
-        >
-          🌐 URL
-        </button>
-
-        {/* Clear formatting */}
-        <button
-          type="button"
-          onClick={() => {
-            editor.chain().focus().clearNodes().unsetAllMarks().unsetFontSize().run();
-          }}
-          className="px-2 py-1 text-xs rounded hover:bg-surface-hover text-muted hover:text-foreground ml-auto"
-          title="Clear formatting"
-        >
-          🧹 Clean
-        </button>
-      </div>
-
-      {/* DEDICATED SCROLLABLE CONTENT VIEWPORT ONLY (TOOLBAR STAYS FIXED ABOVE) */}
-      <div className="flex-1 overflow-y-auto cursor-text bg-input-bg">
-        <EditorContent editor={editor} />
-      </div>
-
-      {/* FOOTER BAR WITH WORD STATS & AUTOSAVE STATUS */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-surface border-t border-border-light text-xs text-muted">
-        <div className="flex items-center gap-4">
-          <span><strong>{wordCount}</strong> words</span>
-          <span><strong>{charCount}</strong> characters</span>
-          <span>Est. read: <strong>{Math.max(1, Math.ceil(wordCount / 200))}</strong> min</span>
         </div>
-
-        <div className="flex items-center gap-2">
-          {autoSaveTime && (
-            <span className="text-[11px] font-medium text-success flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>
-              Auto-saved draft ({autoSaveTime})
-            </span>
-          )}
-          <span className="text-[11px] text-muted-foreground font-mono">TipTap Editor</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

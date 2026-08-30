@@ -59,21 +59,25 @@ export default function NewPostPage() {
   const [status, setStatus] = useState("draft");
   const [isFeatured, setIsFeatured] = useState(false);
   const [isTrending, setIsTrending] = useState(false);
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
-  // SEO & Keywords
+  // SEPARATE TAGS (#Hashtags)
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [rawHashtagInput, setRawHashtagInput] = useState("");
+
+  // SEPARATE KEYWORDS (SEO Focus Keywords List)
+  const [keywordsList, setKeywordsList] = useState<string[]>([]);
+  const [rawKeywordInput, setRawKeywordInput] = useState("");
+
+  // SEO Fields
   const [seoTitle, setSeoTitle] = useState("");
   const [seoDescription, setSeoDescription] = useState("");
-  const [focusKeyword, setFocusKeyword] = useState("");
   const [canonicalUrl, setCanonicalUrl] = useState("");
 
   // Autosave Draft info
   const [autoSaveTime, setAutoSaveTime] = useState<string | null>(null);
   const [isDraftRestored, setIsDraftRestored] = useState(false);
 
-  // Quick tag creation
-  const [newTagName, setNewTagName] = useState("");
-  const [creatingTag, setCreatingTag] = useState(false);
+  // Upload status
   const [uploadingImage, setUploadingImage] = useState(false);
 
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -82,7 +86,7 @@ export default function NewPostPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // 1. Load Categories, Authors, Tags & RESTORE DRAFT FROM LOCALSTORAGE
+  // 1. Load Categories, Authors, Tags & RESTORE DRAFT
   useEffect(() => {
     async function init() {
       try {
@@ -116,9 +120,9 @@ export default function NewPostPage() {
               setIsFeatured(draft.isFeatured || false);
               setIsTrending(draft.isTrending || false);
               setSelectedTagIds(draft.selectedTagIds || []);
+              setKeywordsList(draft.keywordsList || (draft.focusKeyword ? draft.focusKeyword.split(",").map((s: string) => s.trim()).filter(Boolean) : []));
               setSeoTitle(draft.seoTitle || "");
               setSeoDescription(draft.seoDescription || "");
-              setFocusKeyword(draft.focusKeyword || "");
               setCanonicalUrl(draft.canonicalUrl || "");
               setAutoSaveTime(draft.savedAt || "restored");
               setIsDraftRestored(true);
@@ -129,7 +133,6 @@ export default function NewPostPage() {
           }
         }
 
-        // Default fallbacks if no draft
         if (catData.categories?.length > 0) {
           setCategoryId(catData.categories[0].id);
         }
@@ -143,7 +146,7 @@ export default function NewPostPage() {
     init();
   }, []);
 
-  // 2. AUTOMATIC DRAFT AUTOSAVE (debounced on any change)
+  // 2. AUTOMATIC DRAFT AUTOSAVE
   const saveDraft = useCallback(() => {
     if (!title && !content && !excerpt && !featuredImage) return;
 
@@ -165,9 +168,10 @@ export default function NewPostPage() {
       isFeatured,
       isTrending,
       selectedTagIds,
+      keywordsList,
+      focusKeyword: keywordsList.join(", "),
       seoTitle,
       seoDescription,
-      focusKeyword,
       canonicalUrl,
       savedAt: timeStr,
     };
@@ -190,9 +194,9 @@ export default function NewPostPage() {
     isFeatured,
     isTrending,
     selectedTagIds,
+    keywordsList,
     seoTitle,
     seoDescription,
-    focusKeyword,
     canonicalUrl,
   ]);
 
@@ -203,7 +207,6 @@ export default function NewPostPage() {
     return () => clearTimeout(timer);
   }, [saveDraft]);
 
-  // Clear draft function
   const handleClearDraft = () => {
     if (window.confirm("Are you sure you want to clear this draft and start fresh?")) {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -213,9 +216,9 @@ export default function NewPostPage() {
       setContent("");
       setFeaturedImage("");
       setSelectedTagIds([]);
+      setKeywordsList([]);
       setSeoTitle("");
       setSeoDescription("");
-      setFocusKeyword("");
       setCanonicalUrl("");
       setAutoSaveTime(null);
       setIsDraftRestored(false);
@@ -260,50 +263,65 @@ export default function NewPostPage() {
     }
   };
 
+  // SMART KEYWORD PARSING & ADD (Splits pasted text by commas, newlines, or semicolons)
+  const addKeywordsFromText = (rawText: string) => {
+    if (!rawText.trim()) return;
+    const splitWords = rawText
+      .split(/[,;\n]+/)
+      .map((w) => w.trim().replace(/^#/, ""))
+      .filter((w) => w.length > 0);
+
+    const updated = Array.from(new Set([...keywordsList, ...splitWords]));
+    setKeywordsList(updated);
+    setRawKeywordInput("");
+  };
+
+  const removeKeyword = (keywordToRemove: string) => {
+    setKeywordsList((prev) => prev.filter((k) => k !== keywordToRemove));
+  };
+
+  // SMART HASHTAG PARSING & CREATION
+  const addHashtagsFromText = async (rawText: string) => {
+    if (!rawText.trim()) return;
+
+    const tokens = rawText
+      .split(/[\s,;\n]+/)
+      .map((t) => t.trim().replace(/^#+/, ""))
+      .filter((t) => t.length > 0);
+
+    for (const name of tokens) {
+      const existing = tags.find(
+        (t) => t.name.toLowerCase() === name.toLowerCase() || t.slug === slugify(name)
+      );
+
+      if (existing) {
+        if (!selectedTagIds.includes(existing.id)) {
+          setSelectedTagIds((prev) => [...prev, existing.id]);
+        }
+      } else {
+        try {
+          const res = await fetch("/api/tags", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, slug: slugify(name) }),
+          });
+          const data = await res.json();
+          if (res.ok && data.tag) {
+            setTags((prev) => [...prev, data.tag]);
+            setSelectedTagIds((prev) => [...prev, data.tag.id]);
+          }
+        } catch (err) {
+          console.error("Tag create failed:", err);
+        }
+      }
+    }
+    setRawHashtagInput("");
+  };
+
   const handleTagToggle = (tagId: string) => {
     setSelectedTagIds((prev) =>
       prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
     );
-  };
-
-  // Create custom tag inline on the fly
-  const handleCreateCustomTag = async (tagNameToCreate?: string) => {
-    const nameToUse = (tagNameToCreate || newTagName).trim();
-    if (!nameToUse) return;
-
-    const existing = tags.find(
-      (t) => t.name.toLowerCase() === nameToUse.toLowerCase() || t.slug === slugify(nameToUse)
-    );
-    if (existing) {
-      if (!selectedTagIds.includes(existing.id)) {
-        setSelectedTagIds((prev) => [...prev, existing.id]);
-      }
-      setNewTagName("");
-      return;
-    }
-
-    setCreatingTag(true);
-    try {
-      const res = await fetch("/api/tags", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: nameToUse,
-          slug: slugify(nameToUse),
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.tag) {
-        setTags((prev) => [...prev, data.tag]);
-        setSelectedTagIds((prev) => [...prev, data.tag.id]);
-        setNewTagName("");
-      }
-    } catch (err) {
-      console.error("Tag creation failed:", err);
-    } finally {
-      setCreatingTag(false);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -333,7 +351,7 @@ export default function NewPostPage() {
           isTrending,
           seoTitle: seoTitle || null,
           seoDescription: seoDescription || null,
-          focusKeyword: focusKeyword || null,
+          focusKeyword: keywordsList.length > 0 ? keywordsList.join(", ") : null,
           canonicalUrl: canonicalUrl || null,
           tagIds: selectedTagIds,
         }),
@@ -346,9 +364,7 @@ export default function NewPostPage() {
         return;
       }
 
-      // Clear draft on successful creation
       localStorage.removeItem(DRAFT_STORAGE_KEY);
-
       router.push("/admin/posts");
       router.refresh();
     } catch {
@@ -401,7 +417,7 @@ export default function NewPostPage() {
 
       {isDraftRestored && (
         <div className="p-3 bg-primary/10 border border-primary/20 rounded-[var(--radius)] text-xs text-primary flex items-center justify-between">
-          <span>💾 Your previous draft was automatically restored. You will never lose your written content.</span>
+          <span>💾 Your previous draft was automatically restored. You will never lose your work.</span>
           <button type="button" onClick={handleClearDraft} className="underline font-bold ml-2">
             Start Blank
           </button>
@@ -447,49 +463,108 @@ export default function NewPostPage() {
             />
           </div>
 
-          {/* Editor with Fixed Stationary Toolbar */}
+          {/* Editor with Fixed Stationary Toolbar & Multi-Image Gallery & Grammar Check */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-3 shadow-sm">
             <div className="flex items-center justify-between">
               <label className="block text-sm font-bold text-foreground">
                 Article Content (Rich Text)
               </label>
-              <span className="text-xs text-muted">Toolbar stays fixed • Content scrolls inside</span>
+              <span className="text-xs text-muted">Fixed toolbar • 1-3 image grids • Grammar checker</span>
             </div>
 
             <RichTextEditor
               content={content}
               onChange={setContent}
-              height="500px"
+              height="520px"
               autoSaveTime={autoSaveTime}
             />
           </div>
 
-          {/* SEO & Keywords Section */}
+          {/* SEPARATE BOX 1: SEO FOCUS KEYWORDS */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
-            <div>
-              <h2 className="text-base font-bold text-foreground">Google SEO & Search Visibility</h2>
-              <p className="text-xs text-muted mt-0.5">Optimize search snippet, target keywords, and rankings.</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-foreground flex items-center gap-1.5">
+                  <span>🎯</span> Focus Keywords & Search Terms
+                </h2>
+                <p className="text-xs text-muted mt-0.5">
+                  Paste or type keywords separated by commas (e.g. <code>quantum computing, AI, cyber security</code>).
+                </p>
+              </div>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary">
+                {keywordsList.length} keywords
+              </span>
             </div>
 
-            <Input
-              label="SEO Title"
-              value={seoTitle}
-              onChange={(e) => setSeoTitle(e.target.value)}
-              placeholder="Custom search title (defaults to Article Title)"
-            />
-            <Textarea
-              label="SEO Meta Description"
-              value={seoDescription}
-              onChange={(e) => setSeoDescription(e.target.value)}
-              placeholder="Google snippet description (150-160 characters recommended)"
-              rows={2}
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Keyword Input with Paste-Split Support */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={rawKeywordInput}
+                onChange={(e) => setRawKeywordInput(e.target.value)}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData("text");
+                  if (pasted.includes(",") || pasted.includes("\n") || pasted.includes(";")) {
+                    e.preventDefault();
+                    addKeywordsFromText(pasted);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    addKeywordsFromText(rawKeywordInput);
+                  }
+                }}
+                placeholder="Paste keywords or type and press Enter..."
+                className="flex-1 px-3 py-2 bg-input-bg border border-input-border rounded-[var(--radius)] text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => addKeywordsFromText(rawKeywordInput)}
+              >
+                + Add Keyword
+              </Button>
+            </div>
+
+            {/* Rendered Individual Keyword Badges */}
+            {keywordsList.length > 0 ? (
+              <div className="flex flex-wrap gap-2 p-3 bg-surface rounded-[var(--radius)] border border-border-light">
+                {keywordsList.map((kw) => (
+                  <span
+                    key={kw}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+                  >
+                    <span>{kw}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeKeyword(kw)}
+                      className="hover:text-destructive text-[11px] font-bold"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted italic">No focus keywords added yet.</p>
+            )}
+
+            {/* Meta Title & Description */}
+            <div className="pt-3 border-t border-border-light space-y-4">
               <Input
-                label="Focus Keyword"
-                value={focusKeyword}
-                onChange={(e) => setFocusKeyword(e.target.value)}
-                placeholder="e.g., quantum computing, cyber crime"
+                label="SEO Title Tag"
+                value={seoTitle}
+                onChange={(e) => setSeoTitle(e.target.value)}
+                placeholder="Custom Google title tag (defaults to Article Title)"
+              />
+              <Textarea
+                label="SEO Meta Description"
+                value={seoDescription}
+                onChange={(e) => setSeoDescription(e.target.value)}
+                placeholder="Google snippet description (150-160 characters recommended)"
+                rows={2}
               />
               <Input
                 label="Canonical URL (Optional)"
@@ -501,7 +576,7 @@ export default function NewPostPage() {
           </div>
         </div>
 
-        {/* Sidebar 1 column: Publishing, Category, Featured Image with Direct Upload, Trending Hashtags */}
+        {/* Sidebar 1 column: Publishing, Category, Featured Image, SEPARATE HASHTAG BOX */}
         <div className="space-y-6">
           {/* Publishing Settings */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
@@ -649,22 +724,58 @@ export default function NewPostPage() {
             </div>
           </div>
 
-          {/* TRENDING HASHTAGS & TAG MANAGEMENT */}
+          {/* SEPARATE BOX 2: TRENDING HASHTAGS & SOCIAL TAGS */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
             <div>
-              <h2 className="text-base font-bold text-foreground">Tags & Trending Hashtags</h2>
-              <p className="text-xs text-muted">Select or click popular hashtags for Google search discovery.</p>
+              <h2 className="text-base font-bold text-foreground flex items-center gap-1.5">
+                <span>🔥</span> Social & Trending #Hashtags
+              </h2>
+              <p className="text-xs text-muted mt-0.5">
+                Paste space or comma-separated hashtags (e.g. <code>#AI #TechNews #Smartphone</code>)
+              </p>
             </div>
 
-            {/* Quick Add Trending Hashtags */}
+            {/* Smart Hashtag Paste Input */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={rawHashtagInput}
+                onChange={(e) => setRawHashtagInput(e.target.value)}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData("text");
+                  if (pasted.includes(" ") || pasted.includes(",") || pasted.includes("#")) {
+                    e.preventDefault();
+                    addHashtagsFromText(pasted);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    addHashtagsFromText(rawHashtagInput);
+                  }
+                }}
+                placeholder="Paste #hashtags here..."
+                className="flex-1 px-2.5 py-1.5 bg-input-bg border border-input-border rounded text-xs text-foreground placeholder:text-muted"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => addHashtagsFromText(rawHashtagInput)}
+              >
+                + Add
+              </Button>
+            </div>
+
+            {/* Quick 1-Click Popular Trending Hashtags */}
             <div>
-              <span className="text-xs font-semibold text-muted block mb-1.5">🔥 Popular Tech Hashtags:</span>
+              <span className="text-[11px] font-semibold text-muted block mb-1.5">⚡ 1-Click Popular Hashtags:</span>
               <div className="flex flex-wrap gap-1.5">
                 {POPULAR_TRENDING_HASHTAGS.map((hashtag) => (
                   <button
                     key={hashtag}
                     type="button"
-                    onClick={() => handleCreateCustomTag(hashtag)}
+                    onClick={() => addHashtagsFromText(hashtag)}
                     className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 transition-colors"
                   >
                     #{hashtag} +
@@ -673,9 +784,9 @@ export default function NewPostPage() {
               </div>
             </div>
 
-            {/* Active Selected Tags & All Tags */}
+            {/* All Active Selected Tags & List */}
             <div className="pt-2 border-t border-border-light">
-              <span className="text-xs font-semibold text-muted block mb-1.5">All Tags:</span>
+              <span className="text-[11px] font-semibold text-muted block mb-1.5">Active Tags ({selectedTagIds.length} selected):</span>
               <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
                 {tags.map((t) => {
                   const selected = selectedTagIds.includes(t.id);
@@ -686,41 +797,15 @@ export default function NewPostPage() {
                       onClick={() => handleTagToggle(t.id)}
                       className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                         selected
-                          ? "bg-primary text-primary-foreground border-primary font-semibold"
+                          ? "bg-primary text-primary-foreground border-primary font-semibold shadow-xs"
                           : "bg-surface border-border-light text-muted hover:text-foreground"
                       }`}
                     >
-                      #{t.name}
+                      #{t.name} {selected && "✓"}
                     </button>
                   );
                 })}
               </div>
-            </div>
-
-            {/* Inline Custom Tag Input */}
-            <div className="pt-2 border-t border-border-light flex gap-2">
-              <input
-                type="text"
-                value={newTagName}
-                onChange={(e) => setNewTagName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleCreateCustomTag();
-                  }
-                }}
-                placeholder="Type new #hashtag..."
-                className="flex-1 px-2.5 py-1.5 bg-input-bg border border-input-border rounded text-xs text-foreground placeholder:text-muted"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handleCreateCustomTag()}
-                loading={creatingTag}
-              >
-                + Add
-              </Button>
             </div>
           </div>
         </div>
