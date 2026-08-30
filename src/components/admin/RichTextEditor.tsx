@@ -251,6 +251,41 @@ export default function RichTextEditor({
     setShowGrammarPanel(true);
   };
 
+  // JUMP TO EXACT ERROR LINE IN EDITOR & HIGHLIGHT
+  const jumpToErrorInEditor = (snippet?: string) => {
+    if (!editor || !snippet) return;
+    const target = snippet.trim();
+    const doc = editor.state.doc;
+    let foundFrom = -1;
+    let foundTo = -1;
+
+    doc.descendants((node, pos) => {
+      if (foundFrom !== -1) return false;
+      if (node.isText && node.text) {
+        const index = node.text.indexOf(target);
+        if (index !== -1) {
+          foundFrom = pos + index;
+          foundTo = foundFrom + target.length;
+          return false;
+        }
+      }
+    });
+
+    if (foundFrom !== -1 && foundTo !== -1) {
+      editor.chain().focus().setTextSelection({ from: foundFrom, to: foundTo }).scrollIntoView().run();
+    }
+  };
+
+  // 1-CLICK AUTO-FIX GRAMMAR ERROR IN EDITOR
+  const autoFixErrorInEditor = (snippet?: string, suggestion?: string) => {
+    if (!editor || !snippet || !suggestion) return;
+    jumpToErrorInEditor(snippet);
+    editor.chain().focus().insertContent(suggestion).run();
+    setTimeout(() => {
+      runGrammarCheck();
+    }, 150);
+  };
+
   // Upload helper for single or multiple images
   const uploadFiles = async (files: FileList | File[]): Promise<string[]> => {
     const urls: string[] = [];
@@ -743,21 +778,46 @@ export default function RichTextEditor({
               {grammarIssues.map((issue, idx) => (
                 <div
                   key={idx}
-                  className="p-2.5 bg-surface rounded-[var(--radius)] border border-border-light text-xs flex items-start justify-between gap-3"
+                  className="p-3 bg-surface hover:bg-surface-hover/70 transition-colors rounded-[var(--radius)] border border-border-light text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 >
-                  <div>
-                    <span className="font-semibold text-destructive mr-1.5">• {issue.message}</span>
+                  <div
+                    onClick={() => jumpToErrorInEditor(issue.snippet)}
+                    className="cursor-pointer flex-1"
+                    title="Click to jump to this word in the editor"
+                  >
+                    <span className="font-bold text-destructive mr-1.5">• {issue.message}</span>
                     {issue.snippet && (
-                      <span className="text-muted block mt-0.5">
-                        Found in text: <code className="bg-surface-hover px-1 rounded text-foreground font-mono">{issue.snippet}</code>
+                      <span className="text-muted block mt-1">
+                        Found in text:{" "}
+                        <code className="bg-destructive/10 text-destructive font-mono font-bold px-1.5 py-0.5 rounded border border-destructive/20 hover:bg-destructive/20">
+                          {issue.snippet}
+                        </code>{" "}
+                        <span className="text-[11px] text-primary underline ml-1">📍 Jump to word</span>
                       </span>
                     )}
                   </div>
-                  {issue.suggestion && (
-                    <span className="shrink-0 px-2 py-0.5 rounded bg-success/15 text-success font-semibold text-[11px]">
-                      Suggestion: {issue.suggestion}
-                    </span>
-                  )}
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {issue.snippet && (
+                      <button
+                        type="button"
+                        onClick={() => jumpToErrorInEditor(issue.snippet)}
+                        className="px-2.5 py-1 text-xs font-semibold rounded bg-surface border border-border hover:border-primary text-foreground transition-colors"
+                      >
+                        📍 Go to line
+                      </button>
+                    )}
+
+                    {issue.suggestion && issue.snippet && (
+                      <button
+                        type="button"
+                        onClick={() => autoFixErrorInEditor(issue.snippet, issue.suggestion)}
+                        className="px-3 py-1 text-xs font-bold rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-colors flex items-center gap-1"
+                      >
+                        <span>⚡ Fix: {issue.suggestion}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -767,3 +827,4 @@ export default function RichTextEditor({
     </div>
   );
 }
+
