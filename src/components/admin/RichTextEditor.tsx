@@ -7,24 +7,97 @@ import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import Underline from "@tiptap/extension-underline";
 import Placeholder from "@tiptap/extension-placeholder";
+import { Mark, mergeAttributes } from "@tiptap/core";
+
+// Custom TipTap Extension for Font Sizes
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    fontSize: {
+      setFontSize: (size: string) => ReturnType;
+      unsetFontSize: () => ReturnType;
+    };
+  }
+}
+
+const FontSize = Mark.create({
+  name: "fontSize",
+  addOptions() {
+    return {
+      HTMLAttributes: {},
+    };
+  },
+  addAttributes() {
+    return {
+      size: {
+        default: null,
+        parseHTML: (element) => element.style.fontSize?.replace(/['"]+/g, ""),
+        renderHTML: (attributes) => {
+          if (!attributes.size) {
+            return {};
+          }
+          return {
+            style: `font-size: ${attributes.size}`,
+          };
+        },
+      },
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        style: "font-size",
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(this.options.HTMLAttributes, HTMLAttributes), 0];
+  },
+  addCommands() {
+    return {
+      setFontSize:
+        (size: string) =>
+        ({ chain }) => {
+          return chain().setMark(this.name, { size }).run();
+        },
+      unsetFontSize:
+        () =>
+        ({ chain }) => {
+          return chain().unsetMark(this.name).run();
+        },
+    };
+  },
+});
 
 interface RichTextEditorProps {
   content: string;
   onChange: (html: string) => void;
   placeholder?: string;
-  minHeight?: string;
+  height?: string;
+  autoSaveTime?: string | null;
 }
+
+const FONT_SIZES = [
+  { label: "Small (13px)", value: "13px" },
+  { label: "Regular (16px)", value: "16px" },
+  { label: "Medium (18px)", value: "18px" },
+  { label: "Large (20px)", value: "20px" },
+  { label: "Extra Large (24px)", value: "24px" },
+  { label: "Heading (28px)", value: "28px" },
+  { label: "Title (34px)", value: "34px" },
+];
 
 export default function RichTextEditor({
   content,
   onChange,
   placeholder = "Write your article content here...",
-  minHeight = "400px",
+  height = "520px",
+  autoSaveTime,
 }: RichTextEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
+  const [currentFontSize, setCurrentFontSize] = useState("16px");
 
   const editor = useEditor({
     extensions: [
@@ -34,6 +107,7 @@ export default function RichTextEditor({
         },
       }),
       Underline,
+      FontSize,
       Image.configure({
         inline: true,
         allowBase64: true,
@@ -54,8 +128,7 @@ export default function RichTextEditor({
     content,
     editorProps: {
       attributes: {
-        class: `prose max-w-none focus:outline-none p-5 text-foreground text-base leading-relaxed`,
-        style: `min-height: ${minHeight};`,
+        class: "prose max-w-none focus:outline-none p-5 text-foreground leading-relaxed min-h-full",
       },
     },
     onUpdate: ({ editor }) => {
@@ -115,6 +188,15 @@ export default function RichTextEditor({
     }
   };
 
+  const handleFontSizeChange = (size: string) => {
+    setCurrentFontSize(size);
+    if (!size) {
+      editor.chain().focus().unsetFontSize().run();
+    } else {
+      editor.chain().focus().setFontSize(size).run();
+    }
+  };
+
   const addImageUrl = () => {
     const url = window.prompt("Enter image URL (or use 'Upload Image' button for direct files):");
     if (url) {
@@ -134,7 +216,10 @@ export default function RichTextEditor({
   };
 
   return (
-    <div className="border border-input-border rounded-[var(--radius-xl)] bg-input-bg overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all shadow-sm">
+    <div
+      style={{ height }}
+      className="border border-input-border rounded-[var(--radius-xl)] bg-input-bg flex flex-col overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all shadow-sm"
+    >
       {/* Hidden file input for direct image upload */}
       <input
         type="file"
@@ -144,8 +229,8 @@ export default function RichTextEditor({
         className="hidden"
       />
 
-      {/* STICKY FIXED TOOLBAR */}
-      <div className="sticky top-0 z-30 flex flex-wrap items-center gap-1.5 p-2.5 bg-surface-elevated/95 backdrop-blur-md border-b border-border text-foreground shadow-xs">
+      {/* 100% FIXED STATIC TOOLBAR (NEVER SCROLLS) */}
+      <div className="shrink-0 flex flex-wrap items-center gap-1.5 p-2.5 bg-surface-elevated border-b border-border text-foreground select-none shadow-xs z-10">
         {/* Undo / Redo */}
         <button
           type="button"
@@ -168,47 +253,66 @@ export default function RichTextEditor({
 
         <span className="w-[1px] h-5 bg-border mx-1" />
 
+        {/* FONT SIZE SELECTOR */}
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted font-medium">Size:</span>
+          <select
+            value={currentFontSize}
+            onChange={(e) => handleFontSizeChange(e.target.value)}
+            className="px-2 py-1 text-xs font-semibold rounded bg-surface border border-border text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary"
+            title="Font Size"
+          >
+            {FONT_SIZES.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <span className="w-[1px] h-5 bg-border mx-1" />
+
         {/* Headings */}
         <button
           type="button"
           onClick={() => editor.chain().focus().setParagraph().run()}
-          className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+          className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
             editor.isActive("paragraph") && !editor.isActive("heading")
               ? "bg-primary text-primary-foreground font-bold shadow-xs"
               : "hover:bg-surface-hover text-muted hover:text-foreground"
           }`}
-          title="Normal Text Paragraph"
+          title="Normal Text"
         >
-          Paragraph
+          Normal
         </button>
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+          className={`px-2 py-1 text-xs font-bold rounded transition-colors ${
             editor.isActive("heading", { level: 2 })
               ? "bg-primary text-primary-foreground shadow-xs"
               : "hover:bg-surface-hover text-muted hover:text-foreground"
           }`}
-          title="Heading 2 (Major Section)"
+          title="Heading 2"
         >
           H2
         </button>
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+          className={`px-2 py-1 text-xs font-bold rounded transition-colors ${
             editor.isActive("heading", { level: 3 })
               ? "bg-primary text-primary-foreground shadow-xs"
               : "hover:bg-surface-hover text-muted hover:text-foreground"
           }`}
-          title="Heading 3 (Sub-section)"
+          title="Heading 3"
         >
           H3
         </button>
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
-          className={`px-2.5 py-1 text-xs font-bold rounded transition-colors ${
+          className={`px-2 py-1 text-xs font-bold rounded transition-colors ${
             editor.isActive("heading", { level: 4 })
               ? "bg-primary text-primary-foreground shadow-xs"
               : "hover:bg-surface-hover text-muted hover:text-foreground"
@@ -301,7 +405,7 @@ export default function RichTextEditor({
           className={`px-2 py-1 text-xs rounded transition-colors ${
             editor.isActive("blockquote") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
           }`}
-          title="Blockquote / Callout"
+          title="Blockquote"
         >
           &ldquo; Quote
         </button>
@@ -319,9 +423,9 @@ export default function RichTextEditor({
           type="button"
           onClick={() => editor.chain().focus().setHorizontalRule().run()}
           className="px-2 py-1 text-xs rounded hover:bg-surface-hover text-muted hover:text-foreground"
-          title="Insert Horizontal Divider Line"
+          title="Horizontal Divider"
         >
-          ― Divider
+          ― Line
         </button>
 
         <span className="w-[1px] h-5 bg-border mx-1" />
@@ -333,17 +437,16 @@ export default function RichTextEditor({
           className={`px-2 py-1 text-xs font-semibold rounded transition-colors ${
             editor.isActive("link") ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-surface-hover text-muted hover:text-foreground"
           }`}
-          title="Insert / Edit Link"
+          title="Link"
         >
           🔗 Link
         </button>
 
-        {/* Direct Image Upload Button */}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="px-2.5 py-1 text-xs font-semibold rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors flex items-center gap-1.5"
+          className="px-2.5 py-1 text-xs font-semibold rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-colors flex items-center gap-1"
           title="Upload Image from your device"
         >
           {uploading ? (
@@ -357,33 +460,46 @@ export default function RichTextEditor({
           type="button"
           onClick={addImageUrl}
           className="px-2 py-1 text-xs rounded hover:bg-surface-hover text-muted hover:text-foreground"
-          title="Insert Image by Web URL"
+          title="Insert Web Image URL"
         >
-          🌐 Image URL
+          🌐 URL
         </button>
 
         {/* Clear formatting */}
         <button
           type="button"
-          onClick={() => editor.chain().focus().clearNodes().unsetAllMarks().run()}
+          onClick={() => {
+            editor.chain().focus().clearNodes().unsetAllMarks().unsetFontSize().run();
+          }}
           className="px-2 py-1 text-xs rounded hover:bg-surface-hover text-muted hover:text-foreground ml-auto"
-          title="Clear all formatting"
+          title="Clear formatting"
         >
           🧹 Clean
         </button>
       </div>
 
-      {/* Editor Content Area */}
-      <EditorContent editor={editor} />
+      {/* DEDICATED SCROLLABLE CONTENT VIEWPORT ONLY (TOOLBAR STAYS FIXED ABOVE) */}
+      <div className="flex-1 overflow-y-auto cursor-text bg-input-bg">
+        <EditorContent editor={editor} />
+      </div>
 
-      {/* Live Content Statistics Bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-surface border-t border-border-light text-xs text-muted">
+      {/* FOOTER BAR WITH WORD STATS & AUTOSAVE STATUS */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-surface border-t border-border-light text-xs text-muted">
         <div className="flex items-center gap-4">
           <span><strong>{wordCount}</strong> words</span>
           <span><strong>{charCount}</strong> characters</span>
           <span>Est. read: <strong>{Math.max(1, Math.ceil(wordCount / 200))}</strong> min</span>
         </div>
-        <span className="text-[11px] text-muted-foreground font-mono">TipTap Editor v2</span>
+
+        <div className="flex items-center gap-2">
+          {autoSaveTime && (
+            <span className="text-[11px] font-medium text-success flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+              Auto-saved draft ({autoSaveTime})
+            </span>
+          )}
+          <span className="text-[11px] text-muted-foreground font-mono">TipTap Editor</span>
+        </div>
       </div>
     </div>
   );

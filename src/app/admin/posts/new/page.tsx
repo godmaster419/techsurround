@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
@@ -24,6 +24,8 @@ interface TagOption {
   name: string;
   slug: string;
 }
+
+const DRAFT_STORAGE_KEY = "techsurround_new_post_draft";
 
 const POPULAR_TRENDING_HASHTAGS = [
   "TechNews",
@@ -65,11 +67,13 @@ export default function NewPostPage() {
   const [focusKeyword, setFocusKeyword] = useState("");
   const [canonicalUrl, setCanonicalUrl] = useState("");
 
+  // Autosave Draft info
+  const [autoSaveTime, setAutoSaveTime] = useState<string | null>(null);
+  const [isDraftRestored, setIsDraftRestored] = useState(false);
+
   // Quick tag creation
   const [newTagName, setNewTagName] = useState("");
   const [creatingTag, setCreatingTag] = useState(false);
-
-  // Upload status
   const [uploadingImage, setUploadingImage] = useState(false);
 
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -78,35 +82,145 @@ export default function NewPostPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const loadMeta = async () => {
-    try {
-      const [catRes, autRes, tagRes] = await Promise.all([
-        fetch("/api/categories"),
-        fetch("/api/authors"),
-        fetch("/api/tags"),
-      ]);
-      const catData = await catRes.json();
-      const autData = await autRes.json();
-      const tagData = await tagRes.json();
+  // 1. Load Categories, Authors, Tags & RESTORE DRAFT FROM LOCALSTORAGE
+  useEffect(() => {
+    async function init() {
+      try {
+        const [catRes, autRes, tagRes] = await Promise.all([
+          fetch("/api/categories"),
+          fetch("/api/authors"),
+          fetch("/api/tags"),
+        ]);
+        const catData = await catRes.json();
+        const autData = await autRes.json();
+        const tagData = await tagRes.json();
 
-      setCategories(catData.categories || []);
-      setAuthors(autData.authors || []);
-      setTags(tagData.tags || []);
+        setCategories(catData.categories || []);
+        setAuthors(autData.authors || []);
+        setTags(tagData.tags || []);
 
-      if (catData.categories?.length > 0 && !categoryId) {
-        setCategoryId(catData.categories[0].id);
+        // Try restoring saved draft
+        const savedDraftJson = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (savedDraftJson) {
+          try {
+            const draft = JSON.parse(savedDraftJson);
+            if (draft.title || draft.content || draft.excerpt) {
+              setTitle(draft.title || "");
+              setSlug(draft.slug || "");
+              setExcerpt(draft.excerpt || "");
+              setContent(draft.content || "");
+              setFeaturedImage(draft.featuredImage || "");
+              setCategoryId(draft.categoryId || "");
+              setAuthorId(draft.authorId || "");
+              setStatus(draft.status || "draft");
+              setIsFeatured(draft.isFeatured || false);
+              setIsTrending(draft.isTrending || false);
+              setSelectedTagIds(draft.selectedTagIds || []);
+              setSeoTitle(draft.seoTitle || "");
+              setSeoDescription(draft.seoDescription || "");
+              setFocusKeyword(draft.focusKeyword || "");
+              setCanonicalUrl(draft.canonicalUrl || "");
+              setAutoSaveTime(draft.savedAt || "restored");
+              setIsDraftRestored(true);
+              return;
+            }
+          } catch (e) {
+            console.error("Failed to parse draft:", e);
+          }
+        }
+
+        // Default fallbacks if no draft
+        if (catData.categories?.length > 0) {
+          setCategoryId(catData.categories[0].id);
+        }
+        if (autData.authors?.length > 0) {
+          setAuthorId(autData.authors[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load options:", err);
       }
-      if (autData.authors?.length > 0 && !authorId) {
-        setAuthorId(autData.authors[0].id);
-      }
-    } catch (err) {
-      console.error("Failed to load options:", err);
     }
-  };
+    init();
+  }, []);
+
+  // 2. AUTOMATIC DRAFT AUTOSAVE (debounced on any change)
+  const saveDraft = useCallback(() => {
+    if (!title && !content && !excerpt && !featuredImage) return;
+
+    const timeStr = new Date().toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    const draftData = {
+      title,
+      slug,
+      excerpt,
+      content,
+      featuredImage,
+      categoryId,
+      authorId,
+      status,
+      isFeatured,
+      isTrending,
+      selectedTagIds,
+      seoTitle,
+      seoDescription,
+      focusKeyword,
+      canonicalUrl,
+      savedAt: timeStr,
+    };
+
+    try {
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftData));
+      setAutoSaveTime(timeStr);
+    } catch (err) {
+      console.warn("Autosave storage full or disabled:", err);
+    }
+  }, [
+    title,
+    slug,
+    excerpt,
+    content,
+    featuredImage,
+    categoryId,
+    authorId,
+    status,
+    isFeatured,
+    isTrending,
+    selectedTagIds,
+    seoTitle,
+    seoDescription,
+    focusKeyword,
+    canonicalUrl,
+  ]);
 
   useEffect(() => {
-    loadMeta();
-  }, []);
+    const timer = setTimeout(() => {
+      saveDraft();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [saveDraft]);
+
+  // Clear draft function
+  const handleClearDraft = () => {
+    if (window.confirm("Are you sure you want to clear this draft and start fresh?")) {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      setTitle("");
+      setSlug("");
+      setExcerpt("");
+      setContent("");
+      setFeaturedImage("");
+      setSelectedTagIds([]);
+      setSeoTitle("");
+      setSeoDescription("");
+      setFocusKeyword("");
+      setCanonicalUrl("");
+      setAutoSaveTime(null);
+      setIsDraftRestored(false);
+    }
+  };
 
   const handleTitleChange = (val: string) => {
     setTitle(val);
@@ -157,7 +271,6 @@ export default function NewPostPage() {
     const nameToUse = (tagNameToCreate || newTagName).trim();
     if (!nameToUse) return;
 
-    // Check if already exists in loaded tags
     const existing = tags.find(
       (t) => t.name.toLowerCase() === nameToUse.toLowerCase() || t.slug === slugify(nameToUse)
     );
@@ -233,6 +346,9 @@ export default function NewPostPage() {
         return;
       }
 
+      // Clear draft on successful creation
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+
       router.push("/admin/posts");
       router.refresh();
     } catch {
@@ -242,9 +358,9 @@ export default function NewPostPage() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto pb-16">
+    <form onSubmit={handleSubmit} className="space-y-6 max-w-5xl mx-auto pb-16">
       {/* Top action bar */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <Link href="/admin/posts" className="text-xs text-muted hover:text-foreground">
             ← Back to Articles
@@ -253,7 +369,25 @@ export default function NewPostPage() {
             Create New Article
           </h1>
         </div>
+
         <div className="flex items-center gap-3">
+          {autoSaveTime && (
+            <span className="text-xs text-success font-medium hidden sm:inline-flex items-center gap-1.5 bg-success/10 px-2.5 py-1 rounded-full border border-success/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
+              Auto-saved ({autoSaveTime})
+            </span>
+          )}
+
+          {isDraftRestored && (
+            <button
+              type="button"
+              onClick={handleClearDraft}
+              className="text-xs text-muted hover:text-destructive underline"
+            >
+              Clear Draft
+            </button>
+          )}
+
           <Link href="/admin/posts">
             <Button type="button" variant="outline" size="sm">
               Cancel
@@ -265,13 +399,22 @@ export default function NewPostPage() {
         </div>
       </div>
 
+      {isDraftRestored && (
+        <div className="p-3 bg-primary/10 border border-primary/20 rounded-[var(--radius)] text-xs text-primary flex items-center justify-between">
+          <span>💾 Your previous draft was automatically restored. You will never lose your written content.</span>
+          <button type="button" onClick={handleClearDraft} className="underline font-bold ml-2">
+            Start Blank
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-[var(--radius)] text-sm text-destructive" role="alert">
           {error}
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main 2 columns: Title, Excerpt, Content, SEO */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
@@ -304,12 +447,21 @@ export default function NewPostPage() {
             />
           </div>
 
-          {/* Editor */}
+          {/* Editor with Fixed Stationary Toolbar */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-3 shadow-sm">
-            <label className="block text-sm font-semibold text-foreground">
-              Article Content (Rich Text)
-            </label>
-            <RichTextEditor content={content} onChange={setContent} />
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-bold text-foreground">
+                Article Content (Rich Text)
+              </label>
+              <span className="text-xs text-muted">Toolbar stays fixed • Content scrolls inside</span>
+            </div>
+
+            <RichTextEditor
+              content={content}
+              onChange={setContent}
+              height="500px"
+              autoSaveTime={autoSaveTime}
+            />
           </div>
 
           {/* SEO & Keywords Section */}
@@ -431,7 +583,6 @@ export default function NewPostPage() {
               <p className="text-xs text-muted">Upload directly from device or paste link.</p>
             </div>
 
-            {/* Hidden file input */}
             <input
               type="file"
               ref={fileInputRef}
@@ -486,7 +637,6 @@ export default function NewPostPage() {
               </div>
             )}
 
-            {/* Optional URL input */}
             <div className="pt-2 border-t border-border-light">
               <label className="block text-[11px] text-muted mb-1">Or paste Image URL:</label>
               <input

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
@@ -34,6 +34,8 @@ export default function EditPostPage() {
   const id = params?.id as string;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const DRAFT_EDIT_KEY = `techsurround_edit_post_draft_${id}`;
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -55,6 +57,9 @@ export default function EditPostPage() {
   const [seoDescription, setSeoDescription] = useState("");
   const [focusKeyword, setFocusKeyword] = useState("");
   const [canonicalUrl, setCanonicalUrl] = useState("");
+
+  // Autosave Draft info
+  const [autoSaveTime, setAutoSaveTime] = useState<string | null>(null);
 
   // Quick tag creation
   const [newTagName, setNewTagName] = useState("");
@@ -87,6 +92,34 @@ export default function EditPostPage() {
 
         if (postData.post) {
           const p = postData.post;
+          // Check local draft first
+          const savedDraft = localStorage.getItem(DRAFT_EDIT_KEY);
+          if (savedDraft) {
+            try {
+              const draft = JSON.parse(savedDraft);
+              setTitle(draft.title || p.title || "");
+              setSlug(draft.slug || p.slug || "");
+              setExcerpt(draft.excerpt || p.excerpt || "");
+              setContent(draft.content || p.content || "");
+              setFeaturedImage(draft.featuredImage || p.featuredImage || "");
+              setCategoryId(draft.categoryId || p.categoryId || "");
+              setAuthorId(draft.authorId || p.authorId || "");
+              setStatus(draft.status || p.status || "draft");
+              setIsFeatured(draft.isFeatured ?? p.isFeatured ?? false);
+              setIsTrending(draft.isTrending ?? p.isTrending ?? false);
+              setSeoTitle(draft.seoTitle || p.seoTitle || "");
+              setSeoDescription(draft.seoDescription || p.seoDescription || "");
+              setFocusKeyword(draft.focusKeyword || p.focusKeyword || "");
+              setCanonicalUrl(draft.canonicalUrl || p.canonicalUrl || "");
+              setSelectedTagIds(draft.selectedTagIds || p.tags?.map((t: any) => t.tagId) || []);
+              setAutoSaveTime(draft.savedAt || "restored");
+              setLoading(false);
+              return;
+            } catch (e) {
+              console.error("Draft parse error:", e);
+            }
+          }
+
           setTitle(p.title || "");
           setSlug(p.slug || "");
           setExcerpt(p.excerpt || "");
@@ -110,7 +143,69 @@ export default function EditPostPage() {
       }
     }
     loadData();
-  }, [id]);
+  }, [id, DRAFT_EDIT_KEY]);
+
+  // Autosave edit draft
+  const saveDraft = useCallback(() => {
+    if (!title && !content) return;
+
+    const timeStr = new Date().toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    const draftData = {
+      title,
+      slug,
+      excerpt,
+      content,
+      featuredImage,
+      categoryId,
+      authorId,
+      status,
+      isFeatured,
+      isTrending,
+      selectedTagIds,
+      seoTitle,
+      seoDescription,
+      focusKeyword,
+      canonicalUrl,
+      savedAt: timeStr,
+    };
+
+    try {
+      localStorage.setItem(DRAFT_EDIT_KEY, JSON.stringify(draftData));
+      setAutoSaveTime(timeStr);
+    } catch (err) {
+      console.warn("Autosave storage full or disabled:", err);
+    }
+  }, [
+    title,
+    slug,
+    excerpt,
+    content,
+    featuredImage,
+    categoryId,
+    authorId,
+    status,
+    isFeatured,
+    isTrending,
+    selectedTagIds,
+    seoTitle,
+    seoDescription,
+    focusKeyword,
+    canonicalUrl,
+    DRAFT_EDIT_KEY,
+  ]);
+
+  useEffect(() => {
+    if (loading) return;
+    const timer = setTimeout(() => {
+      saveDraft();
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [saveDraft, loading]);
 
   // Direct Featured Image File Upload
   const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -229,6 +324,9 @@ export default function EditPostPage() {
         return;
       }
 
+      // Clear draft on successful save
+      localStorage.removeItem(DRAFT_EDIT_KEY);
+
       router.push("/admin/posts");
       router.refresh();
     } catch {
@@ -242,9 +340,9 @@ export default function EditPostPage() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto pb-16">
+    <form onSubmit={handleSubmit} className="space-y-6 max-w-5xl mx-auto pb-16">
       {/* Top action bar */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <Link href="/admin/posts" className="text-xs text-muted hover:text-foreground">
             ← Back to Articles
@@ -253,7 +351,15 @@ export default function EditPostPage() {
             Edit Article
           </h1>
         </div>
+
         <div className="flex items-center gap-3">
+          {autoSaveTime && (
+            <span className="text-xs text-success font-medium hidden sm:inline-flex items-center gap-1.5 bg-success/10 px-2.5 py-1 rounded-full border border-success/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
+              Auto-saved ({autoSaveTime})
+            </span>
+          )}
+
           <Link href="/admin/posts">
             <Button type="button" variant="outline" size="sm">
               Cancel
@@ -271,7 +377,7 @@ export default function EditPostPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
             <Input
@@ -296,11 +402,21 @@ export default function EditPostPage() {
             />
           </div>
 
+          {/* Editor with Fixed Stationary Toolbar */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-3 shadow-sm">
-            <label className="block text-sm font-semibold text-foreground">
-              Article Content (Rich Text)
-            </label>
-            <RichTextEditor content={content} onChange={setContent} />
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-bold text-foreground">
+                Article Content (Rich Text)
+              </label>
+              <span className="text-xs text-muted">Toolbar stays fixed • Content scrolls inside</span>
+            </div>
+
+            <RichTextEditor
+              content={content}
+              onChange={setContent}
+              height="500px"
+              autoSaveTime={autoSaveTime}
+            />
           </div>
 
           {/* SEO & Keywords Section */}
