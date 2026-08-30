@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Button from "@/components/ui/Button";
@@ -22,10 +22,30 @@ interface AuthorOption {
 interface TagOption {
   id: string;
   name: string;
+  slug: string;
 }
+
+const POPULAR_TRENDING_HASHTAGS = [
+  "TechNews",
+  "CyberSecurity",
+  "ArtificialIntelligence",
+  "AI",
+  "Smartphone",
+  "CyberCrime",
+  "Gadgets",
+  "Apple",
+  "Google",
+  "Samsung",
+  "OpenAI",
+  "Software",
+  "TrendingApps",
+  "5G",
+  "TechSurround",
+];
 
 export default function NewPostPage() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
@@ -39,11 +59,18 @@ export default function NewPostPage() {
   const [isTrending, setIsTrending] = useState(false);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
-  // SEO
+  // SEO & Keywords
   const [seoTitle, setSeoTitle] = useState("");
   const [seoDescription, setSeoDescription] = useState("");
   const [focusKeyword, setFocusKeyword] = useState("");
   const [canonicalUrl, setCanonicalUrl] = useState("");
+
+  // Quick tag creation
+  const [newTagName, setNewTagName] = useState("");
+  const [creatingTag, setCreatingTag] = useState(false);
+
+  // Upload status
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [authors, setAuthors] = useState<AuthorOption[]>([]);
@@ -51,32 +78,33 @@ export default function NewPostPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    async function loadMeta() {
-      try {
-        const [catRes, autRes, tagRes] = await Promise.all([
-          fetch("/api/categories"),
-          fetch("/api/authors"),
-          fetch("/api/tags"),
-        ]);
-        const catData = await catRes.json();
-        const autData = await autRes.json();
-        const tagData = await tagRes.json();
+  const loadMeta = async () => {
+    try {
+      const [catRes, autRes, tagRes] = await Promise.all([
+        fetch("/api/categories"),
+        fetch("/api/authors"),
+        fetch("/api/tags"),
+      ]);
+      const catData = await catRes.json();
+      const autData = await autRes.json();
+      const tagData = await tagRes.json();
 
-        setCategories(catData.categories || []);
-        setAuthors(autData.authors || []);
-        setTags(tagData.tags || []);
+      setCategories(catData.categories || []);
+      setAuthors(autData.authors || []);
+      setTags(tagData.tags || []);
 
-        if (catData.categories?.length > 0) {
-          setCategoryId(catData.categories[0].id);
-        }
-        if (autData.authors?.length > 0) {
-          setAuthorId(autData.authors[0].id);
-        }
-      } catch (err) {
-        console.error("Failed to load options:", err);
+      if (catData.categories?.length > 0 && !categoryId) {
+        setCategoryId(catData.categories[0].id);
       }
+      if (autData.authors?.length > 0 && !authorId) {
+        setAuthorId(autData.authors[0].id);
+      }
+    } catch (err) {
+      console.error("Failed to load options:", err);
     }
+  };
+
+  useEffect(() => {
     loadMeta();
   }, []);
 
@@ -86,10 +114,83 @@ export default function NewPostPage() {
     if (!seoTitle) setSeoTitle(val);
   };
 
+  // Direct Featured Image File Upload
+  const handleFeaturedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to upload image.");
+        setUploadingImage(false);
+        return;
+      }
+
+      setFeaturedImage(data.url);
+    } catch (err) {
+      console.error("Image upload error:", err);
+      alert("Error uploading file.");
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const handleTagToggle = (tagId: string) => {
     setSelectedTagIds((prev) =>
       prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
     );
+  };
+
+  // Create custom tag inline on the fly
+  const handleCreateCustomTag = async (tagNameToCreate?: string) => {
+    const nameToUse = (tagNameToCreate || newTagName).trim();
+    if (!nameToUse) return;
+
+    // Check if already exists in loaded tags
+    const existing = tags.find(
+      (t) => t.name.toLowerCase() === nameToUse.toLowerCase() || t.slug === slugify(nameToUse)
+    );
+    if (existing) {
+      if (!selectedTagIds.includes(existing.id)) {
+        setSelectedTagIds((prev) => [...prev, existing.id]);
+      }
+      setNewTagName("");
+      return;
+    }
+
+    setCreatingTag(true);
+    try {
+      const res = await fetch("/api/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: nameToUse,
+          slug: slugify(nameToUse),
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.tag) {
+        setTags((prev) => [...prev, data.tag]);
+        setSelectedTagIds((prev) => [...prev, data.tag.id]);
+        setNewTagName("");
+      }
+    } catch (err) {
+      console.error("Tag creation failed:", err);
+    } finally {
+      setCreatingTag(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -141,7 +242,7 @@ export default function NewPostPage() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto pb-12">
+    <form onSubmit={handleSubmit} className="space-y-8 max-w-5xl mx-auto pb-16">
       {/* Top action bar */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -171,7 +272,7 @@ export default function NewPostPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Main 2 columns: Title, Excerpt, Content */}
+        {/* Main 2 columns: Title, Excerpt, Content, SEO */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
             <Input
@@ -203,6 +304,7 @@ export default function NewPostPage() {
             />
           </div>
 
+          {/* Editor */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-3 shadow-sm">
             <label className="block text-sm font-semibold text-foreground">
               Article Content (Rich Text)
@@ -210,20 +312,24 @@ export default function NewPostPage() {
             <RichTextEditor content={content} onChange={setContent} />
           </div>
 
-          {/* SEO & Metadata Section */}
+          {/* SEO & Keywords Section */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
-            <h2 className="text-base font-bold text-foreground">SEO Optimization & Schema</h2>
+            <div>
+              <h2 className="text-base font-bold text-foreground">Google SEO & Search Visibility</h2>
+              <p className="text-xs text-muted mt-0.5">Optimize search snippet, target keywords, and rankings.</p>
+            </div>
+
             <Input
               label="SEO Title"
               value={seoTitle}
               onChange={(e) => setSeoTitle(e.target.value)}
-              placeholder="Custom title tag (defaults to Article Title)"
+              placeholder="Custom search title (defaults to Article Title)"
             />
             <Textarea
               label="SEO Meta Description"
               value={seoDescription}
               onChange={(e) => setSeoDescription(e.target.value)}
-              placeholder="Search engine snippet description (150-160 chars recommended)"
+              placeholder="Google snippet description (150-160 characters recommended)"
               rows={2}
             />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -231,7 +337,7 @@ export default function NewPostPage() {
                 label="Focus Keyword"
                 value={focusKeyword}
                 onChange={(e) => setFocusKeyword(e.target.value)}
-                placeholder="e.g., quantum computing"
+                placeholder="e.g., quantum computing, cyber crime"
               />
               <Input
                 label="Canonical URL (Optional)"
@@ -243,7 +349,7 @@ export default function NewPostPage() {
           </div>
         </div>
 
-        {/* Sidebar 1 column: Status, Category, Author, Featured Image, Tags */}
+        {/* Sidebar 1 column: Publishing, Category, Featured Image with Direct Upload, Trending Hashtags */}
         <div className="space-y-6">
           {/* Publishing Settings */}
           <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
@@ -268,7 +374,7 @@ export default function NewPostPage() {
                   type="checkbox"
                   checked={isFeatured}
                   onChange={(e) => setIsFeatured(e.target.checked)}
-                  className="rounded text-primary focus:ring-primary h-4 w-4"
+                  className="rounded text-primary focus:ring-primary h-4 w-4 cursor-pointer"
                 />
                 Feature in Homepage Hero
               </label>
@@ -278,7 +384,7 @@ export default function NewPostPage() {
                   type="checkbox"
                   checked={isTrending}
                   onChange={(e) => setIsTrending(e.target.checked)}
-                  className="rounded text-primary focus:ring-primary h-4 w-4"
+                  className="rounded text-primary focus:ring-primary h-4 w-4 cursor-pointer"
                 />
                 Mark as Trending
               </label>
@@ -318,43 +424,153 @@ export default function NewPostPage() {
             </div>
           </div>
 
-          {/* Featured Image */}
-          <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-3 shadow-sm">
-            <h2 className="text-base font-bold text-foreground">Featured Image</h2>
-            <Input
-              value={featuredImage}
-              onChange={(e) => setFeaturedImage(e.target.value)}
-              placeholder="https://images.unsplash.com/..."
-              helperText="Paste direct image URL."
+          {/* DIRECT FEATURED IMAGE UPLOAD */}
+          <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
+            <div>
+              <h2 className="text-base font-bold text-foreground">Featured Image</h2>
+              <p className="text-xs text-muted">Upload directly from device or paste link.</p>
+            </div>
+
+            {/* Hidden file input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFeaturedImageUpload}
+              accept="image/*"
+              className="hidden"
             />
-            {featuredImage && (
-              <div className="rounded-[var(--radius)] overflow-hidden border border-border mt-2 aspect-video bg-surface">
-                <img src={featuredImage} alt="Preview" className="w-full h-full object-cover" />
+
+            {featuredImage ? (
+              <div className="space-y-3">
+                <div className="rounded-[var(--radius-lg)] overflow-hidden border border-border aspect-video bg-surface relative group">
+                  <img src={featuredImage} alt="Featured Preview" className="w-full h-full object-cover" />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Change Image
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:bg-destructive/10"
+                    onClick={() => setFeaturedImage("")}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-border hover:border-primary/60 rounded-[var(--radius-lg)] p-6 text-center bg-surface cursor-pointer transition-colors"
+              >
+                {uploadingImage ? (
+                  <div className="py-4 text-center">
+                    <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                    <p className="text-xs text-muted">Uploading image...</p>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-2xl block mb-1">🖼️</span>
+                    <p className="text-xs font-semibold text-foreground">Click to Upload from Device</p>
+                    <p className="text-[11px] text-muted mt-0.5">JPG, PNG, WebP (Max 10MB)</p>
+                  </>
+                )}
               </div>
             )}
+
+            {/* Optional URL input */}
+            <div className="pt-2 border-t border-border-light">
+              <label className="block text-[11px] text-muted mb-1">Or paste Image URL:</label>
+              <input
+                type="text"
+                value={featuredImage}
+                onChange={(e) => setFeaturedImage(e.target.value)}
+                placeholder="https://images.unsplash.com/..."
+                className="w-full px-2.5 py-1.5 bg-input-bg border border-input-border rounded text-xs text-foreground placeholder:text-muted"
+              />
+            </div>
           </div>
 
-          {/* Tags */}
-          <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-3 shadow-sm">
-            <h2 className="text-base font-bold text-foreground">Tags</h2>
-            <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
-              {tags.map((t) => {
-                const selected = selectedTagIds.includes(t.id);
-                return (
+          {/* TRENDING HASHTAGS & TAG MANAGEMENT */}
+          <div className="bg-card-bg border border-card-border rounded-[var(--radius-xl)] p-6 space-y-4 shadow-sm">
+            <div>
+              <h2 className="text-base font-bold text-foreground">Tags & Trending Hashtags</h2>
+              <p className="text-xs text-muted">Select or click popular hashtags for Google search discovery.</p>
+            </div>
+
+            {/* Quick Add Trending Hashtags */}
+            <div>
+              <span className="text-xs font-semibold text-muted block mb-1.5">🔥 Popular Tech Hashtags:</span>
+              <div className="flex flex-wrap gap-1.5">
+                {POPULAR_TRENDING_HASHTAGS.map((hashtag) => (
                   <button
-                    key={t.id}
+                    key={hashtag}
                     type="button"
-                    onClick={() => handleTagToggle(t.id)}
-                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                      selected
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-surface border-border-light text-muted hover:text-foreground"
-                    }`}
+                    onClick={() => handleCreateCustomTag(hashtag)}
+                    className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 transition-colors"
                   >
-                    {t.name}
+                    #{hashtag} +
                   </button>
-                );
-              })}
+                ))}
+              </div>
+            </div>
+
+            {/* Active Selected Tags & All Tags */}
+            <div className="pt-2 border-t border-border-light">
+              <span className="text-xs font-semibold text-muted block mb-1.5">All Tags:</span>
+              <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+                {tags.map((t) => {
+                  const selected = selectedTagIds.includes(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => handleTagToggle(t.id)}
+                      className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                        selected
+                          ? "bg-primary text-primary-foreground border-primary font-semibold"
+                          : "bg-surface border-border-light text-muted hover:text-foreground"
+                      }`}
+                    >
+                      #{t.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Inline Custom Tag Input */}
+            <div className="pt-2 border-t border-border-light flex gap-2">
+              <input
+                type="text"
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleCreateCustomTag();
+                  }
+                }}
+                placeholder="Type new #hashtag..."
+                className="flex-1 px-2.5 py-1.5 bg-input-bg border border-input-border rounded text-xs text-foreground placeholder:text-muted"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleCreateCustomTag()}
+                loading={creatingTag}
+              >
+                + Add
+              </Button>
             </div>
           </div>
         </div>

@@ -79,6 +79,40 @@ export default function NewMobileArrivalPage() {
     speakers: "Stereo",
   });
 
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  const handlePrimaryImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to upload image.");
+        setUploadingImage(false);
+        return;
+      }
+
+      setForm((prev) => ({ ...prev, primaryImage: data.url }));
+    } catch (err) {
+      console.error("Upload error:", err);
+      alert("Error uploading image.");
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const handleChange = (key: string, value: string) => {
     setForm((prev) => {
       const updated = { ...prev, [key]: value };
@@ -201,7 +235,7 @@ export default function NewMobileArrivalPage() {
           />
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Release / Announcement Date"
             value={form.releaseDate}
@@ -209,17 +243,51 @@ export default function NewMobileArrivalPage() {
             placeholder="January 2026"
           />
           <Input
-            label="Primary Image URL"
-            value={form.primaryImage}
-            onChange={(e) => handleChange("primaryImage", e.target.value)}
-            placeholder="https://..."
-          />
-          <Input
             label="Official Product Link"
             value={form.officialWebsite}
             onChange={(e) => handleChange("officialWebsite", e.target.value)}
             placeholder="https://..."
           />
+        </div>
+
+        {/* Primary Image Upload */}
+        <div className="pt-2">
+          <label className="block text-sm font-semibold text-foreground mb-1.5">Primary Device Image</label>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handlePrimaryImageUpload}
+            accept="image/*"
+            className="hidden"
+          />
+          <div className="flex flex-col sm:flex-row gap-4 items-start">
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-border hover:border-primary/60 rounded-[var(--radius-lg)] p-5 text-center bg-surface cursor-pointer transition-colors w-full sm:w-64"
+            >
+              {uploadingImage ? (
+                <p className="text-xs text-muted">Uploading...</p>
+              ) : (
+                <>
+                  <span className="text-xl block mb-1">📱</span>
+                  <p className="text-xs font-semibold text-foreground">Click to Upload Device Photo</p>
+                  <p className="text-[10px] text-muted">Direct from your computer</p>
+                </>
+              )}
+            </div>
+            {form.primaryImage && (
+              <div className="w-24 h-24 rounded border border-border bg-surface flex items-center justify-center p-1 relative group">
+                <img src={form.primaryImage} alt="Device Preview" className="max-h-full object-contain" />
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, primaryImage: "" })}
+                  className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-white rounded-full text-xs flex items-center justify-center"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <Textarea
@@ -230,6 +298,7 @@ export default function NewMobileArrivalPage() {
           rows={2}
         />
       </div>
+
 
       {/* Specifications Sections */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
