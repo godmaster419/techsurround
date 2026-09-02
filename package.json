@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "seed": "tsx src/lib/seed.ts",
+    "seed:articles": "tsx src/lib/publish-articles.ts"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
